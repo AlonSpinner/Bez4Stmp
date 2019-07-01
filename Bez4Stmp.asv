@@ -220,7 +220,7 @@ classdef Bez4Stmp
                     qInd=j;
                 end
             end
-            hd=sqrt(hd2max);
+            hd=sqrt(hd);
         end
     end %methods that have no interaction with the object created by the class
 end
@@ -848,4 +848,28 @@ for i=1:N
 end
 
 P=[r(:),z(:)];
+end
+function [hd,pInd,qInd]=Hausdorff(P,Q)
+% Calculates the Hausdorff Distance, hd, between two sets of points, P and
+% Q (which could be two trajectories). Sets P and Q must be matrices with
+% an equal number of columns (dimensions), though not necessarily an equal
+% number of rows (observations).
+
+%Input:
+%P - double matrix m1xn
+%Q - double matrix m2xn
+szP=size(P); szQ=size(Q);
+if szP(2)~=szQ(2), error('dimension size (number of columns) of both inputs need to be the same'); end
+
+ed2=@(p,q) (p-q)*(p-q)'; %euclidian distant squared
+hdmax=0; %initalize
+for i=1:szP(1)
+    [hd,j]=min(ed2(P(i,:),Q)); %hausdorff distance
+    if hd>hdmax
+        hdmax=hd;
+        pInd=i;
+        qInd=j;
+    end
+end
+hd=sqrt(hd);
 end
