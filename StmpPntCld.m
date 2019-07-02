@@ -1,4 +1,4 @@
-classdef Bez4Stmp
+classdef StmpPntCld
     %For final project in faculty of mechanichal engineering, Technion
     %2019.
     %By Yam Ben Natan and Alon Spinner
@@ -7,18 +7,19 @@ classdef Bez4Stmp
         PointCloud %computed in constructor. PointCloud after processing (Transform2Z and downsampling)
         BoundingCylinderLength %computed in constructor
         BoundingCylinderRadius %computed in constructor
-        Xnode %computed in constructor
-        CompactControlPoints %control points in initial form (before RadialNonRigid registration)
-        BlownControlPoints %control points after Compact has been blown up
+        SphereRadius %computed in constructor
+        Xstop %computed in constructor
+        CompactNodes %nodes in initial form (before RadialNonRigid registration)
+        BlownNodes %nodes after CompactNodes have been thorugh RadialNonRigid registration
     end
     properties (SetAccess = public) %can be changed by user
         GridLengthFcn=@(R,L) R*(0.5*R/L); %after downsampling: VerticesAmount*(GridLength^2)/(2*pi*R*L)~1 by construction
         PatchAmount=20; %default
         BezierOrder=3; %default
-        XnodeCalculationMethod='normalSTD'; %default
+        XstopCalculationMethod='normalSTD'; %default
     end
     methods %public methods, accessible from outside the class
-        function obj=Bez4Stmp(PntCld) %Constructor
+        function obj=StmpPntCld(PntCld) %Constructor
             %Input:
             %PntCld - points to xyz double matrix of size mx3 point
             %cloud OR pointCloud class object.
@@ -82,35 +83,39 @@ classdef Bez4Stmp
             PtCld=pcdownsample(PtCld,'gridAverage',GridLength); %Downsample by grid legnth
             obj.PointCloud=PtCld; %introduce to parameters
             
-            %Find Xnode - point seperating between sphereical and
+            %Find Xstop - point seperating between sphereical and
             %Cylinderical part
-            Xnode=FindXnode(PtCld,L,obj.XnodeCalculationMethod);
-            obj.Xnode=Xnode; %introduce to parameters
+            Xstp=FindXstop(PtCld,L,obj.XstopCalculationMethod);
+            obj.Xstop=Xstp; %introduce to parameters
             
-            %Create Compact control points - control points before blowing
+            %Find radius of sphereical part
+            r=L-Xstp(:,3);
+            obj.SphereRadius=r;
+            
+            %Create Compact nodes - nodes before blowing
             %algorithm
-            P=BezBellCurve(R/2,R/2,Xnode(3)+R/2,20);
+            P=BezBellCurve(r/2,R/2,Xstp(3)+r,20);
             xyz=RotateXZcurve(P,20);
-            xyz(:,:,1)=xyz(:,:,1)+Xnode(1); xyz(:,:,2)=xyz(:,:,2)+Xnode(2);
-            obj.CompactControlPoints=pointCloud(xyz);
+            xyz(:,:,1)=xyz(:,:,1)+Xstp(1); xyz(:,:,2)=xyz(:,:,2)+Xstp(2);
+            obj.CompactNodes=pointCloud(xyz);
             
-            %Create BlownControlPoints - control points after blowing
+            %Create BlownNodes - nodes after blowing
             %algorithm
-            h=helpdlg(sprintf(['Creating BlownControlPoints from CompactControlPoints.',...
+            h=helpdlg(sprintf(['Creating BlownNodes from CompactNodes.\n',...
                 'This might take a few mintues']));
             %Split process to two parts - sphere and cylinder. then merge
             %Sphere:
-            roiSph=[-R,R,-R,R,Xnode(3),L]; %range of intereset (bounding box [xbound,ybound,zbound])
+            roiSph=[-R,R,-R,R,Xstp(3),L]; %range of intereset (bounding box [xbound,ybound,zbound])
             StatSph=select(obj.PointCloud,findPointsInROI(obj.PointCloud,roiSph)); %stationary sphere from obj.PointCloud
-            MovSph=select(obj.CompactControlPoints,findPointsInROI(obj.CompactControlPoints,roiSph)); %sphere to blow (from obj.CompactControlPoints)
-            BlownSph=RadialNonRigidRegistration('Spherical',MovSph,StatSph,L-Xnode(3),'Xnode',Xnode,'Display','iter'); %blown sphere to be  merged
+            MovSph=select(obj.CompactNodes,findPointsInROI(obj.CompactNodes,roiSph)); %sphere to blow (from obj.CompactNodes)
+            BlownSph=RadialNonRigidRegistration('Spherical',MovSph,StatSph,[-r/2,r],Xstp,'Display','iter'); %blown sphere to be  merged
             %Cylinder:
-            roiCyl=[-R,R,-R,R,0,Xnode(3)]; %range of intereset (bounding box [xbound,ybound,zbound])
+            roiCyl=[-R,R,-R,R,0,Xstp(3)]; %range of intereset (bounding box [xbound,ybound,zbound])
             StatCyl=select(obj.PointCloud,findPointsInROI(obj.PointCloud,roiCyl)); %stationary cylinder from obj.PointCloud
-            MovCyl=select(obj.CompactControlPoints,findPointsInROI(obj.CompactControlPoints,roiCyl)); %cylinder to blow (from obj.CompactControlPoints)
-            BlownCyl=RadialNonRigidRegistration('Cylinderical',MovCyl,StatCyl,R,'Display','iter'); %blown cylinder to be  merged
+            MovCyl=select(obj.CompactNodes,findPointsInROI(obj.CompactNodes,roiCyl)); %cylinder to blow (from obj.CompactNodes)
+            BlownCyl=RadialNonRigidRegistration('Cylinderical',MovCyl,StatCyl,[-R/2,R],Xstp,'Display','iter'); %blown cylinder to be  merged
             %Merge:
-            obj.BlownControlPoints=pcmerge(BlownSph,BlownCyl,GridLength); %merge
+            obj.BlownNodes=pcmerge(BlownSph,BlownCyl,GridLength); %merge
             close(h); %close helpdlg
         end
     end
@@ -198,7 +203,7 @@ classdef Bez4Stmp
                 end
             end
         end
-        function [hd,pInd,qInd]=Hausdorff(P,Q)
+        function [hd,pInd,qInd]=Hausdorff(P,Q,varargin)
             % Calculates the Hausdorff Distance, hd, between two sets of points, P and
             % Q (which could be two trajectories). Sets P and Q must be matrices with
             % an equal number of columns (dimensions), though not necessarily an equal
@@ -207,20 +212,52 @@ classdef Bez4Stmp
             %Input:
             %P - double matrix m1xn
             %Q - double matrix m2xn
+            
+            %varargin Input:
+            %'OneSide' - loops on only on P for minimal distances
+            
+            %Output:
+            %hd -scalar hausdorff distance
+            %pInd,qInd - hd=norm(P(pIind,:)-Q(qInd,:))
+            
+            Method='TwoSide'; %classic hausdorff defintion
+            if numel(varargin)>0 && strcmpi(varargin{1},'OneSide')
+               Method='OneSide';
+            end
+                           
             szP=size(P); szQ=size(Q);
             if szP(2)~=szQ(2), error('dimension size (number of columns) of both inputs need to be the same'); end
             
-            ed2=@(p,q) diag((p-q)'*(p-q)); %euclidian distant squared
-            hd2max=0; %initalize
-            for i=1:szP(1)
-                [hd2,j]=min(ed2(P(i,:),Q)); %hausdorff distance
-                if hd2>hd2max
-                    hd2max=hd2;
-                    pInd=i;
-                    qInd=j;
+            ed2=@(p,q) sum((p-q).^2,2); %euclidian distant squared
+            [pInd,qInd]=deal(ones(2,1));
+            hd2P=0; %initalize
+            
+            %loop on P
+            for ip=1:szP(1)
+                [hd2,iq]=min(ed2(P(ip,:),Q)); %hausdorff distance
+                if hd2>hd2P
+                    hd2P=hd2;
+                    pInd(1)=ip;
+                    qInd(1)=iq;
                 end
             end
-            hd=sqrt(hd);
+            %loop on Q
+            hd2Q=0;
+            if strcmp(Method,'TwoSide')
+                for iq=1:szQ(1)
+                    [hd2,ip]=min(ed2(Q(iq,:),P)); %hausdorff distance
+                    if hd2>hd2Q
+                        hd2Q=hd2;
+                        pInd(2)=ip;
+                        qInd(2)=iq;
+                    end
+                end
+            end
+            %conclude
+            [hd2,Ind]=max([hd2P,hd2Q]);
+            pInd=pInd(Ind);
+            qInd=qInd(Ind);
+            hd=sqrt(hd2);
         end
     end %methods that have no interaction with the object created by the class
 end
@@ -270,7 +307,7 @@ function [R,L]=BoundingCylinder(xyz)
 %it is aligned with z axis, has base on z=0
 
 %Input
-%xyz - matrix of [x,y,z] point cloud
+%xyz - matrix of [x,y,z] point cloud ((mx3)
 
 %Output:
 %R - radius of bounding cylinder
@@ -288,44 +325,14 @@ L=max(xyz(:,3));
 % This implementation copyright Richard Brown, 2007, but is freely
 % available to copy, use, or modify as long as this line is maintained
 
-% Obtained from "fitcircle.m" from mathworks file exchange
-% https://www.mathworks.com/matlabcentral/fileexchange/15060-fitcircle-m
-
 %project all XYZ points to XY plane and find convex hull.
 %Circl will be  fitted on convex hull
 xy=xyz(:,[1,2]);
 CHull=xy(convhull(xy),:);  %[x,y] mat. find convex hull points
 
-%Convenience variables
-m =size(CHull,1);
-x1=CHull(:,1);
-x2=CHull(:,2);
-
-% Compute best fit w.r.t. algebraic error using linear least squares
-%
-% Circle is represented as a matrix quadratic form
-%     ax'x + b'x + c = 0
-% Linear least squares estimate found by minimising Bu = 0 s.t. norm(u) = 1
-%     where u = [a; b; c]
-
-% Form the coefficient matrix
-B = [x1.^2 + x2.^2, x1, x2, ones(m, 1)];
-
-% Least squares estimate is right singular vector corresp. to smallest
-% singular value of B
-[~,~, V] = svd(B);
-u = V(:, 4);
-
-% For clarity, set the quadratic form variables
-a = u(1);
-b = u(2:3);
-c = u(4);
-
-% Convert to centre/radius
-z = -b / (2*a);
-R = sqrt((norm(b)/(2*a))^2 - c/a);
+[~,R]=fitcircle(CHull,'linear');
 end
-function Xnode=FindXnode(PtCld,L,method,varargin)
+function Xstop=FindXstop(PtCld,L,method,varargin)
 %Assumption:
 %--PtCld was already processed by function Transfom2Z:
 %it is aligned with z axis, has base on z=0
@@ -343,7 +350,7 @@ function Xnode=FindXnode(PtCld,L,method,varargin)
 %suggestion: 0.4
 
 %Output:
-%Xnode [x,y,z] is the node that seprates between the "sphere" part and the
+%Xstop [x,y,z] is the node that seprates between the "sphere" part and the
 %"cylinder" part in the given cloud point
 
 %Assumptions:
@@ -392,7 +399,7 @@ switch method
         Znode=CleanPtCld.Location(Idx,3);
     case 'normalThreshold'
         if ~exist('Threshold','var') || isempty(Threshold) || (Threshold>1 || Threshold<0)
-            error('Failed to compute Xnode. Need to provide a Threshold in range [0,1] with the chosen method')
+            error('Failed to compute Xstop. Need to provide a Threshold in range [0,1] with the chosen method')
         end
         %sometimes there is noise in the lower parts of the given scan that prodces vertical normals
         pass=find(PtCld.Location(:,3)>L/4); %all vertices that pass the condition
@@ -404,13 +411,13 @@ switch method
         Znode=CleanPtCld.Location(Idx,3);
 end
 
-%find [x,y] of Xnode by mean on all the points above it (higher than Znode)
+%find [x,y] of Xstop by mean on all the points above it (higher than Znode)
 pass=find(PtCld.Location(:,3)>Znode); %all vertices that pass the condition
 AbvPtCld=select(PtCld,pass);
-Xnode=[mean(AbvPtCld.Location(:,[1,2])),Znode];
+Xstop=[mean(AbvPtCld.Location(:,[1,2])),Znode];
 
 end
-function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,MaxRadius,varargin)
+function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Rbounds,Xstop,varargin)
 %Blow up MovPntCld to StaticPntCld using fmincon (optimization) on
 %Hausdorff distance to register MovPntCld onto StaticPntCld.
 %Algorithm works in two steps:
@@ -437,12 +444,13 @@ function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Ma
 %object with similar .Location value
 %MovPntCld - Point cloud cloud in format mx3 or mxnx3 where the 3~[x,y,z]
 %OR pointCloud object with similar.Location value
-%MaxRadius - Maximal radius to add to a point in MovPntCld
-%Xnode - point from with
+%RBounds - [Minimal radius,Maximal radius] to add to a point in MovPntCld
+%Xstop - [x,y,z] mx3 point in 3D space. if spherical mehthod was chosen it
+%is the point from which radial expansion happens about. if cylinderical
+%method was chosen, Xstop(1,2) is the [x,y] coordante where the centeral axis passes
+%through and expansion happens about
 
 %Varargin inputs:
-%Xnode - [x,y,z] mx3 point in 3D space. if spherical mehthod was chosen it
-%is the point from which radial expansion happens about
 %DiffMinChange/DiffMaxChange - double, scalar. min/max change in radial
 %values of points
 %MaxIterations - integer,scalar.
@@ -454,13 +462,12 @@ function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Ma
 %MovPntCld(input)
 
 %varargin input and their defaults
-DiffMinChange=MaxRadius/1000; DiffMaxChange=MaxRadius/10; MaxIterations=20;
+DeltaR=Rbounds(2)-Rbounds(1);
+DiffMinChange=DeltaR/1000; DiffMaxChange=DeltaR/10; MaxIterations=20;
 Display='none';
 for ind=1:2:length(varargin)
     comm=lower(varargin{ind});
     switch comm
-        case 'xnode'
-            Xnode=varargin{ind+1};
         case 'diffminchange'
             DiffMinChange=varargin{ind+1};
         case 'diffmaxchange'
@@ -472,8 +479,8 @@ for ind=1:2:length(varargin)
     end
 end
 %Default variables
-if strcmpi(Method,'Spherical') && (~exist('Xnode','var') || isempty(Xnode))
-    error('You must include Xnode if spherical method was chosen. See varargin inputs');
+if strcmpi(Method,'Spherical') && (~exist('Xstop','var') || isempty(Xstop))
+    error('You must include Xstop if spherical method was chosen. See varargin inputs');
 end
 
 
@@ -490,24 +497,24 @@ m=size(MovPntCld,1); %find amount of points to move
 %find t - matrix mx3 of radial direction per point
 switch lower(Method)
     case 'spherical'
-        t=(MovPntCld-Xnode)./vecnorm(MovPntCld-Xnode,2,2);
+        t=(MovPntCld-Xstop)./vecnorm(MovPntCld-Xstop,2,2);
     case 'cylinderical'
         xy=MovPntCld(:,[1,2]);
-        t=[xy,zeros(m,1)]./vecnorm(xy,2,2);
+        t=[xy-Xstop(1:2),zeros(m,1)]./vecnorm(xy-Xstop(1:2),2,2);
 end
 
 fun=@(r) CostFcn(MovPntCld,StaticPntCld,t,r);
 options = optimoptions('fmincon','Algorithm','interior-point','Display',Display,...
     'DiffMaxChange',DiffMaxChange,'DiffMinChange',DiffMinChange,...
-    'MaxIterations',MaxIterations);
+    'MaxIterations',MaxIterations,'MaxFunctionEvaluations',MaxIterations*m);
 %Rough registration
-lb=0;
-ub=MaxRadius;
+lb=Rbounds(1);
+ub=Rbounds(2);
 r0=DiffMinChange;
 rRough=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
 %Fine registration
-lb=zeros(m,1);
-ub=MaxRadius*ones(m,1);
+lb=Rbounds(1)*ones(m,1);
+ub=Rbounds(2)*ones(m,1);
 r0=rRough*ones(m,1);
 rFine=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
 
@@ -637,7 +644,7 @@ function [P,Q]=BezBellCurve(R,d,L,Nq)
 %Builds a 2D bezier curve and evalutes Nq points on it
 %(eqidistance on parameter q in [0,1])
 
-%    Control points (symbolised by "@") are set as such:
+%    nodes (symbolised by "@") are set as such:
 %  @4<----R--->@3
 %              ^      ^
 %              |      |
@@ -662,7 +669,7 @@ function [P,Q]=BezBellCurve(R,d,L,Nq)
 
 %Output:
 %P - evaluated points on Bezier Curve [x,y,z] (mx2)
-%Q - Control points [x,y,z] (mx2)
+%Q - nodes [x,y,z] (mx2)
 
 %Example:
 % L=10; R=3; d=3; Nq=10;
@@ -672,7 +679,7 @@ function [P,Q]=BezBellCurve(R,d,L,Nq)
 % scatter(Q(:,1),Q(:,2),10,'r');
 % %NOTE: d=R, d=0 and d=L are the three interesting cases
 
-%build control points and parameter vector
+%build nodes and parameter vector
 Q=[R,0;
     R,L-d;
     R,L;
@@ -710,10 +717,10 @@ end
 xyz=cat(3,X,Y,Z);
 end
 function R=BezCrv_DeCasteljau(Q,q)
-%Evaluates Bezier Curve by given control points and parameter
+%Evaluates Bezier Curve by given nodes and parameter
 %value
 
-%Q - control points in format [x] or [x,y,z] dimension matrix. top row is q=0.
+%Q - nodes in format [x] or [x,y,z] dimension matrix. top row is q=0.
 %q - running parameter of bezier curve. 0=<q<=1
 %R - [x] or [x,y,z] format. point on bezier curve
 % https://pages.mtu.edu/~shene/COURSES/cs3621/NOTES/spline/Bezier/de-casteljau.html
@@ -726,6 +733,240 @@ for k=1:(n+1)
 end
 R=Q(1,:);
 end
+function [z, r, residual] = fitcircle(x, varargin)
+% Obtained from "fitcircle.m" from mathworks file exchange
+% https://www.mathworks.com/matlabcentral/fileexchange/15060-fitcircle-m
+
+%FITCIRCLE    least squares circle fit
+%   
+%   [Z, R] = FITCIRCLE(X) fits a circle to the N points in X minimising
+%   geometric error (sum of squared distances from the points to the fitted
+%   circle) using nonlinear least squares (Gauss Newton)
+%       Input
+%           X : 2xN array of N 2D points, with N >= 3
+%       Output
+%           Z : center of the fitted circle
+%           R : radius of the fitted circle
+%
+%   [Z, R] = FITCIRCLE(X, 'linear') fits a circle using linear least
+%   squares minimising the algebraic error (residual from fitting system
+%   of the form ax'x + b'x + c = 0)
+%
+%   [Z, R] = FITCIRCLE(X, Property, Value, ...) allows parameters to be
+%   passed to the internal Gauss Newton method. Property names can be
+%   supplied as any unambiguous contraction of the property name and are 
+%   case insensitive, e.g. FITCIRCLE(X, 't', 1e-4) is equivalent to
+%   FITCIRCLE(X, 'tol', 1e-4). Valid properties are:
+%
+%       Property:                 Value:
+%       --------------------------------
+%       maxits                    positive integer, default 100
+%           Sets the maximum number of iterations of the Gauss Newton
+%           method
+%
+%       tol                       positive constant, default 1e-5
+%           Gauss Newton converges when the relative change in the solution
+%           is less than tol
+%
+%   [X, R, RES] = fitcircle(...) returns the 2 norm of the residual from 
+%   the least squares fit
+%
+%   Example:
+%       x = [1 2 5 7 9 3; 7 6 8 7 5 7];
+%       % Get linear least squares fit
+%       [zl, rl] = fitcircle(x, 'linear')
+%       % Get true best fit
+%       [z, r] = fitcircle(x)
+%
+%   Reference: "Least-squares fitting of circles and ellipses", W. Gander,
+%   G. Golub, R. Strebel - BIT Numerical Mathematics, 1994, Springer
+
+% This implementation copyright Richard Brown, 2007, but is freely
+% available to copy, use, or modify as long as this line is maintained
+
+error(nargchk(1, 5, nargin, 'struct'))
+
+% Default parameters for Gauss Newton minimisation
+params.maxits = 100;
+params.tol    = 1e-5;
+
+% Check x and get user supplied parameters
+[x, fNonlinear, params] = parseinputs(x, params, varargin{:});
+
+% Convenience variables
+m  = size(x, 2);
+x1 = x(1, :)';
+x2 = x(2, :)';
+
+
+% 1) Compute best fit w.r.t. algebraic error using linear least squares
+% 
+% Circle is represented as a matrix quadratic form
+%     ax'x + b'x + c = 0
+% Linear least squares estimate found by minimising Bu = 0 s.t. norm(u) = 1
+%     where u = [a; b; c]
+
+% Form the coefficient matrix
+B = [x1.^2 + x2.^2, x1, x2, ones(m, 1)];
+
+% Least squares estimate is right singular vector corresp. to smallest
+% singular value of B
+[U, S, V] = svd(B);
+u = V(:, 4);
+
+% For clarity, set the quadratic form variables
+a = u(1);
+b = u(2:3);
+c = u(4);
+
+% Convert to centre/radius
+z = -b / (2*a);
+r = sqrt((norm(b)/(2*a))^2 - c/a);
+
+% 2) Nonlinear refinement to miminise geometric error, and compute residual
+if fNonlinear
+    [z, r, residual] = fitcircle_geometric(x, z, r);
+else
+    residual = norm(B * u);
+end
+
+% END MAIN FUNCTION BODY
+
+% NESTED FUNCTIONS
+    function [z, r, residual] = fitcircle_geometric(x, z0, r0)
+        % Use a simple Gauss Newton method to minimize the geometric error
+        fConverged = false;
+        
+        % Set initial u
+        u     = [z0; r0];
+        
+        % Delta is the norm of current step, scaled by the norm of u
+        delta = inf;
+        nIts  = 0;
+        
+        for nIts = 1:params.maxits
+            % Find the function and Jacobian 
+            [f, J] = sys(u);
+            
+            % Solve for the step and update u
+            h = -J \ f;
+            u = u + h;
+            
+            % Check for convergence
+            delta = norm(h, inf) / norm(u, inf);
+            if delta < params.tol
+                fConverged = true;
+                break
+            end
+        end
+        
+        if ~fConverged
+            warning('fitcircle:FailureToConverge', ...
+                'Gauss Newton iteration failed to converge');
+        end
+        z = u(1:2);
+        r = u(3);
+        f = sys(u);
+        residual = norm(f);
+        
+        
+        function [f, J] = sys(u)
+            %SYS   Nonlinear system to be minimised - the objective
+            %function is the distance to each point from the fitted circle
+            %contained in u
+
+            % Objective function
+            f = (sqrt(sum((repmat(u(1:2), 1, m) - x).^2)) - u(3))';
+            
+            % Jacobian
+            denom = sqrt( (u(1) - x1).^2 + (u(2) - x2).^2 );
+            J = [(u(1) - x1) ./ denom, (u(2) - x2) ./ denom, repmat(-1, m, 1)];
+        end % sys
+        
+    end % fitcircle_geometric
+
+% END NESTED FUNCTIONS
+
+end 
+function [x, fNonlinear, params] = parseinputs(x, params, varargin)
+% Make sure x is 2xN where N > 3
+if size(x, 2) == 2
+    x = x';
+end
+
+if size(x, 1) ~= 2
+    error('fitcircle:InvalidDimension', ...
+        'Input matrix must be two dimensional')
+end
+
+if size(x, 2) < 3
+    error('fitcircle:InsufficientPoints', ...
+        'At least 3 points required to compute fit')
+end
+
+% determine whether we are measuring geometric error (nonlinear), or
+% algebraic error (linear)
+fNonlinear = true;
+switch length(varargin)
+    % No arguments means a nonlinear least squares with defaul parameters
+    case 0
+        return
+       
+    % One argument can only be 'linear', specifying linear least squares
+    case 1
+        if strncmpi(varargin{1}, 'linear', length(varargin{1}))
+            fNonlinear = false;
+            return
+        else
+            error('fitcircle:UnknownOption', 'Unknown Option')
+        end
+        
+    % Otherwise we're left with user supplied parameters for Gauss Newton
+    otherwise
+        if rem(length(varargin), 2) ~= 0
+            error('fitcircle:propertyValueNotPair', ...
+                'Additional arguments must take the form of Property/Value pairs');
+        end
+
+        % Cell array of valid property names
+        properties = {'maxits', 'tol'};
+
+        while length(varargin) ~= 0
+            property = varargin{1};
+            value    = varargin{2};
+            
+            % If the property has been supplied in a shortened form, lengthen it
+            iProperty = find(strncmpi(property, properties, length(property)));
+            if isempty(iProperty)
+                error('fitcircle:UnkownProperty', 'Unknown Property');
+            elseif length(iProperty) > 1
+                error('fitcircle:AmbiguousProperty', ...
+                    'Supplied shortened property name is ambiguous');
+            end
+            
+            % Expand property to its full name
+            property = properties{iProperty};
+            
+            switch property
+                case 'maxits'
+                    if value <= 0
+                        error('fitcircle:InvalidMaxits', ...
+                            'maxits must be an integer greater than 0')
+                    end
+                    params.maxits = value;
+                case 'tol'
+                    if value <= 0
+                        error('fitcircle:InvalidTol', ...
+                            'tol must be a positive real number')
+                    end
+                    params.tol = value;
+            end % switch property
+            varargin(1:2) = [];
+        end % while
+
+end % switch length(varargin)
+
+end %parseinputs %for fitcircle
 %% functions not in use
 function [xyz,Theta,Psi]=CalcSphere(R,Ntheta,Npsi,varargin)
 %INPUT:
@@ -849,27 +1090,29 @@ end
 
 P=[r(:),z(:)];
 end
-function [hd,pInd,qInd]=Hausdorff(P,Q)
-% Calculates the Hausdorff Distance, hd, between two sets of points, P and
-% Q (which could be two trajectories). Sets P and Q must be matrices with
-% an equal number of columns (dimensions), though not necessarily an equal
-% number of rows (observations).
+function r=FindSphereRadius(xyz)
+%Assumption:
+%xyz "spherical" half dome point cloud is centered around the origin facing
+%up
 
-%Input:
-%P - double matrix m1xn
-%Q - double matrix m2xn
-szP=size(P); szQ=size(Q);
-if szP(2)~=szQ(2), error('dimension size (number of columns) of both inputs need to be the same'); end
+%Algorithm:
+%project point cloud on ZY and ZX plane
+%calculate convex hall of both projections
+%solve algebric sphereical fit (non linear)
+%r=mean([rzx,rzy])
 
-ed2=@(p,q) (p-q)*(p-q)'; %euclidian distant squared
-hdmax=0; %initalize
-for i=1:szP(1)
-    [hd,j]=min(ed2(P(i,:),Q)); %hausdorff distance
-    if hd>hdmax
-        hdmax=hd;
-        pInd=i;
-        qInd=j;
-    end
-end
-hd=sqrt(hd);
+%Input
+%xyz - matrix of [x,y,z] point cloud ((mx3)
+
+%Output:
+%r - radius of fitted sphere
+zy=xyz(:,[2,3]);
+zyhull=zy(convhull(zy),:);
+[~,rzy]=fitcircle(zyhull,'linear');
+
+zx=xyz(:,[1,3]);
+zxhull=zy(convhull(zx),:);
+[~,rzx]=fitcircle(zxhull,'linear');
+
+r=mean([rzx,rzy]);
 end
