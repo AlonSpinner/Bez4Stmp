@@ -1,27 +1,31 @@
-classdef StmpPntCld
+classdef Bez4Stmp
     %For final project in faculty of mechanichal engineering, Technion
     %2019.
     %By Yam Ben Natan and Alon Spinner
     properties (SetAccess = private)  %equivalent to "read only" (Getable but not Setable)
-        Scan %computed in constructor. Point Cloud provided to algorithm
-        PointCloud %computed in constructor. PointCloud after processing (Transform2Z and downsampling)
-        BoundingCylinderLength %computed in constructor
-        BoundingCylinderRadius %computed in constructor
-        SphereRadius %computed in constructor
-        Xstop %computed in constructor
-        CompactNodes %nodes in initial form (before RadialNonRigid registration)
-        BlownNodes %nodes after CompactNodes have been thorugh RadialNonRigid registration
+        %all properties below are initalized in constructor
+        
+        Scan %pointCloud mx3. Point Cloud provided to algorithm
+        PointCloud %pointCloud mx3. PointCloud after processing (Transform2Z and downsampling)
+        BoundingCylinderLength %%double 1x1.
+        BoundingCylinderRadius %%double 1x1.
+        SphereRadius %double 1x1.
+        Xcenter %double [x,y,z].
+        CompactNodes %pointCloud mxnx3. Nodes in initial form (before RadialNonRigid registration)
+        BlownNodes %pointCloud mxnx3. nodes after CompactNodes have been thorugh RadialNonRigid registration
+        CP %struct of bezier mesh control points containing info of vertices, patches and connectivity
     end
     properties (SetAccess = public) %can be changed by user
         GridLengthFcn=@(R,L) R*(0.5*R/L); %after downsampling: VerticesAmount*(GridLength^2)/(2*pi*R*L)~1 by construction
-        PatchAmount=20; %default
-        BezierOrder=3; %default
-        XstopCalculationMethod='normalSTD'; %default
+        BezierPatchAmount=20; %default
+        CakeSlices=4; %default
+        BezierOrder=5; %default
+        XcenterCalculationMethod='normalSTD'; %default
     end
     methods %public methods, accessible from outside the class
-        function obj=StmpPntCld(PntCld) %Constructor
+        function obj=Bez4Stmp(PntCldIn) %Constructor
             %Input:
-            %PntCld - points to xyz double matrix of size mx3 point
+            %PntCldIn - points to xyz double matrix of size mx3 point
             %cloud OR pointCloud class object.
             
             %depending on it's class, assumes the following:
@@ -43,11 +47,11 @@ classdef StmpPntCld
             end
             
             %obtain xyz - mx3 double class of point cloud vertices
-            switch class(PntCld)
+            switch class(PntCldIn)
                 case 'double'
-                    xyz=PntCld;
+                    xyz=PntCldIn;
                 case 'char'
-                    FileName=PntCld;
+                    FileName=PntCldIn;
                     [~,~,ext]=fileparts(FileName);
                     switch ext
                         case '.stl'
@@ -57,7 +61,7 @@ classdef StmpPntCld
                             if isa(xyz,'pointCloud'), xyz=xyz.Location; end %if point cloud and not mx3 double. make it mx3 double
                     end
                 case 'pointCloud' %incase user went ahead and created a point cloud object
-                    xyz=PntCld.Location;
+                    xyz=PntCldIn.Location;
                 otherwise
                     clear obj %delete default object which was created when method was called
                     error(sprintf(['Wrong Input\n\n',...
@@ -78,45 +82,109 @@ classdef StmpPntCld
             obj.BoundingCylinderRadius=R; %introduce to parameters
             
             %Create PointCloud - post preprocessing point cloud object
-            PtCld=pointCloud(T2Z_xyz); %create point cloud object from preprocessed point cloud
+            PntCld=pointCloud(T2Z_xyz); %create point cloud object from preprocessed point cloud
             GridLength=obj.GridLengthFcn(R,L); %obtain voxel edge length by default function
-            PtCld=pcdownsample(PtCld,'gridAverage',GridLength); %Downsample by grid legnth
-            obj.PointCloud=PtCld; %introduce to parameters
+            PntCld=pcdownsample(PntCld,'gridAverage',GridLength); %Downsample by grid legnth
+            obj.PointCloud=PntCld; %introduce to parameters
             
-            %Find Xstop - point seperating between sphereical and
+            %Find Xcenter - point seperating between sphereical and
             %Cylinderical part
-            Xstp=FindXstop(PtCld,L,obj.XstopCalculationMethod);
-            obj.Xstop=Xstp; %introduce to parameters
+            Xcntr=FindXcenter(PntCld,L,obj.XcenterCalculationMethod);
+            obj.Xcenter=Xcntr; %introduce to parameters
             
             %Find radius of sphereical part
-            r=L-Xstp(:,3);
+            r=L-Xcntr(:,3);
             obj.SphereRadius=r;
             
             %Create Compact nodes - nodes before blowing
             %algorithm
-            P=BezBellCurve(r/2,R/2,Xstp(3)+r,20);
-            xyz=RotateXZcurve(P,20);
-            xyz(:,:,1)=xyz(:,:,1)+Xstp(1); xyz(:,:,2)=xyz(:,:,2)+Xstp(2);
-            obj.CompactNodes=pointCloud(xyz);
+            [Nvert,Ncircum]=MeshNodesAmount(obj.BezierPatchAmount,obj.CakeSlices,obj.BezierOrder);
+            P=BezBellCurve(r/2,2*r,Xcntr(3)+r,Nvert);
+            CompactSphInd=(P(:,2)>Xcntr(3)); CompactCylInd=~CompactSphInd; %boolean arrays [0,0,0,1,1,1,1]
+            xyz=RotateXZcurve(P,Ncircum); %rotate to create double size Nvert x Ncircum x 3
+            xyz(:,:,1)=xyz(:,:,1)+Xcntr(1); xyz(:,:,2)=xyz(:,:,2)+Xcntr(2); %align vertical axis to pass through Xcenter
+            obj.CompactNodes=pointCloud(xyz); %introduce to object parameters
+            CompactSph=xyz(CompactSphInd,:,:); CompactCyl=xyz(CompactCylInd,:,:); %seperate for expansion(blowing) algorithm
             
-            %Create BlownNodes - nodes after blowing
-            %algorithm
+            %Create BlownNodes - nodes after blowing algorithm
             h=helpdlg(sprintf(['Creating BlownNodes from CompactNodes.\n',...
                 'This might take a few mintues']));
             %Split process to two parts - sphere and cylinder. then merge
+            StatSphInd=PntCld.Location(:,3)>Xcntr(3); StatCylInd=~StatSphInd;%boolean arrays [0,0,0,1,1,1,1]
             %Sphere:
-            roiSph=[-R,R,-R,R,Xstp(3),L]; %range of intereset (bounding box [xbound,ybound,zbound])
-            StatSph=select(obj.PointCloud,findPointsInROI(obj.PointCloud,roiSph)); %stationary sphere from obj.PointCloud
-            MovSph=select(obj.CompactNodes,findPointsInROI(obj.CompactNodes,roiSph)); %sphere to blow (from obj.CompactNodes)
-            BlownSph=RadialNonRigidRegistration('Spherical',MovSph,StatSph,[-r/2,r],Xstp,'Display','iter'); %blown sphere to be  merged
+            StatSph=PntCld.Location(StatSphInd,:);
+            BlownSph=RadialNonRigidRegistration('Spherical',CompactSph,StatSph,[-r/2,r],Xcntr,'Display','iter'); %blown sphere to be  merged
             %Cylinder:
-            roiCyl=[-R,R,-R,R,0,Xstp(3)]; %range of intereset (bounding box [xbound,ybound,zbound])
-            StatCyl=select(obj.PointCloud,findPointsInROI(obj.PointCloud,roiCyl)); %stationary cylinder from obj.PointCloud
-            MovCyl=select(obj.CompactNodes,findPointsInROI(obj.CompactNodes,roiCyl)); %cylinder to blow (from obj.CompactNodes)
-            BlownCyl=RadialNonRigidRegistration('Cylinderical',MovCyl,StatCyl,[-R/2,R],Xstp,'Display','iter'); %blown cylinder to be  merged
+            StatCyl=PntCld.Location(StatCylInd,:);
+            BlownCyl=RadialNonRigidRegistration('Cylinderical',CompactCyl,StatCyl,[-R/2,R],Xcntr,'Display','iter'); %blown cylinder to be  merged
             %Merge:
-            obj.BlownNodes=pcmerge(BlownSph,BlownCyl,GridLength); %merge
+            obj.BlownNodes=pointCloud(cat(1,BlownSph,BlownCyl)); %merge
             close(h); %close helpdlg
+            
+            %create CP struct and introduce to parameters
+            obj.CP=StumpMesh2CP(obj.BlownNodes,obj.BezierOrder);
+        end
+        function Handles=DrawBezierPatches(obj,varargin)
+            %draws bezier parameteric surfaces from data stored in obj.CP
+            
+            %Varagin inputs:
+            %Ax - handle of axes. if none chosen will draw to gca
+            %N - number of points drawn are N^2. by default N=30
+            %Color - color of all patches. if not specified - will be by lines (matlab colormap).
+            
+            %Outputs:
+            %Handles - array of handles size(1,Patch Amount)
+            
+            %Note:
+            %CP is a struct with:
+            
+            %CP.v - vertices [X,Y,Z] matrix format
+            
+            %CP.p -  patches. size([BezO+1,BezO+1,Patch Amount]).
+            %Values are row index of points in CP.v. depth index is patch indexing.
+            
+            %CP.c - patch connectivity. size([Ptch Amount,4]). The row index of CP.c indicates the patch involved.
+            %Values are patch indexes. a patch can have 4 neighbors and they are ordered [Left, Right, Up,
+            %Down] in the row. if a patch has no connectivity in a certin direction,
+            %the related value will be 0.
+            
+            pCP=obj.CP; %pCP - private CP (just to shorten writing without referencing from obj)
+            
+            %default values
+            Ax=0; N=30; Color=0;
+            %Obtain inputs
+            for ind=1:2:length(varargin)
+                comm=lower(varargin{ind});
+                switch comm
+                    case 'n'
+                        N=varargin{ind+1};
+                    case 'ax'
+                        Ax=varargin{ind+1};
+                    case 'color'
+                        Color=varargin{ind+1};
+                end
+            end
+            
+            %Initalize axes
+            if ~ishghandle(Ax,'axes'), Ax=gca; end %if Ax is 0, handle wasnt provided. go for gca.
+            xlabel(Ax,'x'); ylabel(Ax,'y'); zlabel(Ax,'z');
+            axis(Ax,'equal'); grid(Ax,'on'); hold(Ax,'on'); view(Ax,3);
+            % Ax.WindowState = 'maximized';
+            %Draw Patches and obtain handles
+            PtchAmnt=size(pCP.p,3);
+            Handles=gobjects(1,PtchAmnt); %initalize handle array
+            uOp1=size(pCP.p,2); %u order plus 1 (amount of control points in the u direction)
+            vOp1=size(pCP.p,1);
+            if any(Color), PtchColor=repmat(Color,PtchAmnt,1); else, PtchColor=lines(PtchAmnt); end %creates matrix of color per patch
+            Waith=waitbar(0,'Rendering . . .');
+            for k=1:PtchAmnt
+                Pcp=reshape(pCP.v(pCP.p(:,:,k),:),[vOp1,uOp1,3]); %Obtain patch control points. format explained above
+                Psrfp=BezPtchCP2SrfP(Pcp,N);
+                Handles(k)=surf(Ax,Psrfp(:,:,1),Psrfp(:,:,2),Psrfp(:,:,3),...
+                    'facecolor',PtchColor(k,:),'edgecolor','none','facealpha',0.6,'UserData',k); %plot curve section
+                waitbar(k/PtchAmnt,Waith); %update waitbar
+            end
+            delete(Waith); %kill waitbar
         end
     end
     methods (Static)
@@ -222,9 +290,9 @@ classdef StmpPntCld
             
             Method='TwoSide'; %classic hausdorff defintion
             if numel(varargin)>0 && strcmpi(varargin{1},'OneSide')
-               Method='OneSide';
+                Method='OneSide';
             end
-                           
+            
             szP=size(P); szQ=size(Q);
             if szP(2)~=szQ(2), error('dimension size (number of columns) of both inputs need to be the same'); end
             
@@ -332,7 +400,7 @@ CHull=xy(convhull(xy),:);  %[x,y] mat. find convex hull points
 
 [~,R]=fitcircle(CHull,'linear');
 end
-function Xstop=FindXstop(PtCld,L,method,varargin)
+function Xcenter=FindXcenter(PtCld,L,method,varargin)
 %Assumption:
 %--PtCld was already processed by function Transfom2Z:
 %it is aligned with z axis, has base on z=0
@@ -350,7 +418,7 @@ function Xstop=FindXstop(PtCld,L,method,varargin)
 %suggestion: 0.4
 
 %Output:
-%Xstop [x,y,z] is the node that seprates between the "sphere" part and the
+%Xcenter [x,y,z] is the node that seprates between the "sphere" part and the
 %"cylinder" part in the given cloud point
 
 %Assumptions:
@@ -399,7 +467,7 @@ switch method
         Znode=CleanPtCld.Location(Idx,3);
     case 'normalThreshold'
         if ~exist('Threshold','var') || isempty(Threshold) || (Threshold>1 || Threshold<0)
-            error('Failed to compute Xstop. Need to provide a Threshold in range [0,1] with the chosen method')
+            error('Failed to compute Xcenter. Need to provide a Threshold in range [0,1] with the chosen method')
         end
         %sometimes there is noise in the lower parts of the given scan that prodces vertical normals
         pass=find(PtCld.Location(:,3)>L/4); %all vertices that pass the condition
@@ -411,13 +479,33 @@ switch method
         Znode=CleanPtCld.Location(Idx,3);
 end
 
-%find [x,y] of Xstop by mean on all the points above it (higher than Znode)
+%find [x,y] of Xcenter by mean on all the points above it (higher than Znode)
 pass=find(PtCld.Location(:,3)>Znode); %all vertices that pass the condition
 AbvPtCld=select(PtCld,pass);
-Xstop=[mean(AbvPtCld.Location(:,[1,2])),Znode];
+Xcenter=[mean(AbvPtCld.Location(:,[1,2])),Znode];
 
 end
-function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Rbounds,Xstop,varargin)
+function [Nvert,Ncircum]=MeshNodesAmount(PatchAmount,CakeSlices,BezierOrder)
+%Input:
+%PatchAmount - amount of bezier patches to be formed
+%CakeSlices - amount of bezier patches on the circumference in a given
+%CakeLayer
+%BezierOrder - polynomial order of bezier patches (symmeterical for both
+%parameters)
+
+%Output:
+%Nvert - amount of points in a vertical line (defacto z direction)
+%Ncircm - amount of points in a horizontal (circumference of stump) line
+
+%Ncircum=(BezierOrder+1)+(CakeLayers-1)*BezierOrder=CakeLayers*BezierOrder
+%Nvert=(BezierOrder+1)+(CakeSlices-2)*BezierOrder+(BezierOrder-1)=CakeSlices*BezierOrder+1
+
+if mod(PatchAmount,CakeSlices), error('PatchAmount must be a multiplyer of CakeSlices'); end
+CakeLayers=PatchAmount/CakeSlices;
+Ncircum=CakeLayers*BezierOrder;
+Nvert=CakeSlices*BezierOrder+1;
+end
+function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Rbounds,Xcenter,varargin)
 %Blow up MovPntCld to StaticPntCld using fmincon (optimization) on
 %Hausdorff distance to register MovPntCld onto StaticPntCld.
 %Algorithm works in two steps:
@@ -442,12 +530,12 @@ function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Rb
 %Method - 'Cylinderical'/'Spherical'
 %StaticPntCld - Point cloud in format of [x,y,z] (mx3) OR pointCloud
 %object with similar .Location value
-%MovPntCld - Point cloud cloud in format mx3 or mxnx3 where the 3~[x,y,z]
+%MovPntCld - Point cloud in format mx3 or mxnx3 where the 3~[x,y,z]
 %OR pointCloud object with similar.Location value
 %RBounds - [Minimal radius,Maximal radius] to add to a point in MovPntCld
-%Xstop - [x,y,z] mx3 point in 3D space. if spherical mehthod was chosen it
+%Xcenter - [x,y,z] mx3 point in 3D space. if spherical mehthod was chosen it
 %is the point from which radial expansion happens about. if cylinderical
-%method was chosen, Xstop(1,2) is the [x,y] coordante where the centeral axis passes
+%method was chosen, Xcenter(1,2) is the [x,y] coordante where the centeral axis passes
 %through and expansion happens about
 
 %Varargin inputs:
@@ -456,15 +544,16 @@ function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Rb
 %MaxIterations - integer,scalar.
 %Display - 'none'/'iter/'final'. displays data in fmincon. see fmincon
 %options for more
+%OutputClass - 'double'/'pointCloud'. default set to 'double'
 
 %Output:
-%BlownPntCld - pointCloud object with .Location in the same size format as
-%MovPntCld(input)
+%BlownPntCld - point cloud size format as MovPntCld(input). class may vary
+%depending on Varargin input Outputclass choice.
 
 %varargin input and their defaults
 DeltaR=Rbounds(2)-Rbounds(1);
 DiffMinChange=DeltaR/1000; DiffMaxChange=DeltaR/10; MaxIterations=20;
-Display='none';
+Display='none'; OutputClass='double';
 for ind=1:2:length(varargin)
     comm=lower(varargin{ind});
     switch comm
@@ -476,15 +565,19 @@ for ind=1:2:length(varargin)
             MaxIterations=varargin{ind+1};
         case 'display'
             Display=varargin{ind+1};
+        case 'outputclass'
+            OutputClass=varargin{ind+1};
     end
 end
 %Default variables
-if strcmpi(Method,'Spherical') && (~exist('Xstop','var') || isempty(Xstop))
-    error('You must include Xstop if spherical method was chosen. See varargin inputs');
+if strcmpi(Method,'Spherical') && (~exist('Xcenter','var') || isempty(Xcenter))
+    error('You must include Xcenter if spherical method was chosen. See varargin inputs');
 end
 
-
-%Obtain double matrices if pointCloud objects were given
+%if point clouds give in uncomfi formats, change them
+%StaticPntCld needs to be pointCloud object for cost function (use of
+%findNearestNeighbors)
+%MovPntCld should be in format mx3 or mxnx3 where the 3~[x,y,z]
 if isa(MovPntCld,'pointCloud'), MovPntCld=MovPntCld.Location; end
 if ~isa(StaticPntCld,'pointCloud'), StaticPntCld=pointCloud(StaticPntCld); end
 
@@ -497,10 +590,10 @@ m=size(MovPntCld,1); %find amount of points to move
 %find t - matrix mx3 of radial direction per point
 switch lower(Method)
     case 'spherical'
-        t=(MovPntCld-Xstop)./vecnorm(MovPntCld-Xstop,2,2);
+        t=(MovPntCld-Xcenter)./vecnorm(MovPntCld-Xcenter,2,2);
     case 'cylinderical'
         xy=MovPntCld(:,[1,2]);
-        t=[xy-Xstop(1:2),zeros(m,1)]./vecnorm(xy-Xstop(1:2),2,2);
+        t=[xy-Xcenter(1:2),zeros(m,1)]./vecnorm(xy-Xcenter(1:2),2,2);
 end
 
 fun=@(r) CostFcn(MovPntCld,StaticPntCld,t,r);
@@ -519,9 +612,9 @@ r0=rRough*ones(m,1);
 rFine=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
 
 %Create output
-MovPntCld=MovPntCld+t.*rFine;
-if numel(sz)>2, MovPntCld=reshape(MovPntCld,sz); end
-BlownPntCld=pointCloud(MovPntCld);
+BlownPntCld=MovPntCld+t.*rFine;
+if numel(sz)>2, BlownPntCld=reshape(BlownPntCld,sz); end
+if strcmpi(OutputClass,'pointCloud'), BlownPntCld=pointCloud(BlownPntCld); end
 
     function Cost=CostFcn(MovPntCld,StaticPntCld,t,r)
         %note: Nested functions variables who share a common name with
@@ -536,8 +629,89 @@ BlownPntCld=pointCloud(MovPntCld);
         end
     end
 end
+function CP=StumpMesh2CP(MeshNodes,BezO)
+%Input:
+%MeshNodes  - point cloud (class double or pointCloud) of size Nvert x Ncircum x 3
+%BezO - order of bezier patches (same for both parameters).
+%BezO=3 <-> 4 control points in each parameter
+
+
+%output:
+%CP is a struct with:
+
+%CP.v - vertices [x,y,z] ((Nvert*Ncircum)x3) format
+
+%CP.p -  patches. size([BezO+1,BezO+1,Patch Amount]).
+%Values are row index of points in CP.v. depth index is patch indexing.
+
+%CP.c - patch connectivity. size([Ptch Amount,4]). The row index of CP.c indicates the patch involved.
+%Values are patch indexes. a patch can have 4 neighbors and they are ordered [Left, Right, Up,
+%Down] in the row. if a patch has no connectivity in a certin direction,
+%the related value will be 0.
+
+%Note1:
+%Patches are stiched in the vertical and circumference direction, and there is an overlap of one
+%"line" inbetween patches to accomidate g0 geometeric continuity.
+% 1st patch,  2nd-(end-1), patch %(end) patch - connects with 1st patch
+%   |           |                 |
+%   V           V                 V
+%
+%hence:
+%M=Nvert=(BezierOrder+1)+(CakeSlices-2)*BezierOrder+(BezierOrder-1)=CakeSlices*BezierOrder+1
+%N=Ncircum=(BezierOrder+1)+(CakeLayers-1)*BezierOrder=CakeLayers*BezierOrder
+%where:
+%M=Nvert - amount of nodes in a vertical line
+%N=Ncircm - amount of nodes in a horizontal (circumference of stump) line
+
+if isa(MeshNodes,'pointCloud'); MeshNodes=MeshNodes.Location; end
+
+sz=size(MeshNodes);
+M=sz(1); %amount of nodes in a vertical line
+N=sz(2); %amount of nodes in a horizontal (circumference of stump) line
+NodeAmnt=M*N;
+CakeSlices=(M-1)/BezO; %amount of patches in a single layer
+CakeLayers=N/BezO; %amount of layers of patches
+PtchAmnt=CakeSlices*CakeLayers;
+
+Iv=reshape(1:NodeAmnt,[M,N]); %indexing matrix to vertices in ControlPoints
+
+%Build V
+V=reshape(MeshNodes,[],3); %vertices [x,y,z] (mx3) format
+
+%Build P
+P=zeros(BezO+1,BezO+1,PtchAmnt);
+k=1;
+for n=1:BezO:(N-2*BezO+1) %go "block" by "block" and collect it into P
+    for m=1:BezO:(M-BezO)
+        P(:,:,k)=Iv(m:m+BezO,n:n+BezO);
+        k=k+1;
+    end
+end
+for m=1:BezO:(M-BezO) %add the blocks that stich the circumference togther
+    P(:,:,k)=[Iv(m:m+BezO,(N-BezO+1):N),Iv(m:m+BezO,1)];
+    k=k+1;
+end
+
+%Build C
+Ip=reshape(1:PtchAmnt,[CakeLayers,CakeSlices]); %indexing point in PtchCP.
+C=zeros(PtchAmnt,4);
+for k=1:PtchAmnt
+    [i,j]=ind2sub(size(Ip),k); %returns indexes [i,j] for patch number k
+    if i==1, U=0; else, U=Ip(i-1,j); end %returns 0 if no patch above
+    if i==CakeLayers, D=0; else, D=Ip(i+1,j); end %returns 0 if no patch below
+    if j==1, L=Ip(i,CakeSlices); else, L=Ip(i,j-1); end %remember circularity
+    if j==CakeSlices, R=Ip(i,1); else, R=Ip(i,j+1); end
+    C(k,:)=[L,R,U,D];
+    %------------
+end
+
+%insert to struct
+CP.v=V;
+CP.p=P;
+CP.c=C;
+end
 %% extra functions (note: can't call one method from another)
-function varargout = stlread(file)
+function varargout=stlread(file)
 %Works only with binary STLS
 %imported from https://www.mathworks.com/matlabcentral/fileexchange/22409-stl-file-reader
 %slightly edited to remove ASCII parts which did not work
@@ -583,7 +757,7 @@ switch nargout
         varargout{1} = struct('faces',f,'vertices',v);
 end
 end
-function [F,V,N] = stlbinary(M)
+function [F,V,N]=stlbinary(M)
 F = [];
 V = [];
 N = [];
@@ -689,7 +863,7 @@ q=linspace(0,1,Nq);
 %Evaluate points
 P=zeros(Nq,2);
 for i=1:Nq
-    P(i,:)=BezCrv_DeCasteljau(Q,q(i));
+    P(i,:)=EvalBezCrv_DeCasteljau(Q,q(i));
 end
 
 end
@@ -716,7 +890,7 @@ for i=1:n
 end
 xyz=cat(3,X,Y,Z);
 end
-function R=BezCrv_DeCasteljau(Q,q)
+function R=EvalBezCrv_DeCasteljau(Q,q)
 %Evaluates Bezier Curve by given nodes and parameter
 %value
 
@@ -733,12 +907,62 @@ for k=1:(n+1)
 end
 R=Q(1,:);
 end
-function [z, r, residual] = fitcircle(x, varargin)
+function R=EvalBezPtch_DeCasteljau(Pcp,u,v)
+%Referance https://pages.mtu.edu/~shene/COURSES/cs3621/NOTES/surface/bezier-de-casteljau.html
+%u,v - numeric running values of patch (running 0 to 1)
+
+%Pcp - patch control points will be in the format of size(Pcp)=[Vorder+1,Uorder+1,3]
+%for example: control point (1,1) value is placed as such: Pcp(1,1,:) = [X,Y,Z]
+%EXAMPLE: Pcp(:,:)= P11,P12,P13 -----> u direction
+%                   P21,P22,P23
+%                   |
+%                   |
+%                   |
+%     v direction   V
+
+%runs algorithem on control points in the v direction, with parameter v to obtain a set of points.
+%then run on those points with paramter u to obtain R(u,v)
+Xv=EvalBezCrv_DeCasteljau(Pcp(:,:,1),v);
+Yv=EvalBezCrv_DeCasteljau(Pcp(:,:,2),v);
+Zv=EvalBezCrv_DeCasteljau(Pcp(:,:,3),v);
+R(1)=EvalBezCrv_DeCasteljau(Xv',u);%x
+R(2)=EvalBezCrv_DeCasteljau(Yv',u);%y
+R(3)=EvalBezCrv_DeCasteljau(Zv',u);%z
+end
+function [SrfP,U,V]=BezPtchCP2SrfP(Pcp,N)
+%retruns evaulted points on bezier patch surface from bezier patch conrol
+%points. Amount of points if symmetric for both parametre direction (N)
+
+%N - number of points for patching drawing is N^2
+%Pcp- patch control points will be in the format of size(Pcp)=[Vorder+1,Uorder+1,3]
+%for example: control point (1,1) value is placed as such: Pcp(1,1,:) = [X,Y,Z]
+%EXAMPLE: Pcp(:,:)= P11,P12,P13 -----> u direction
+%                   P21,P22,P23
+%                   |
+%                   |
+%                   |
+%     v direction   V
+
+
+%returns Psrfp (Patch surf points) - numeric matrix NxNx3 containing (:,:[x,y,z]) of patch
+% and U,V for meshing if anyone wants.
+SrfP=zeros(N,N,3); %initalize
+u=linspace(0,1,N);
+v=linspace(0,1,N);
+[U,V]=meshgrid(u,v);
+for i=1:N
+    for j=1:N
+        R=EvalBezPtch_DeCasteljau(Pcp,U(i,j),V(i,j)); %Obtain Point
+        SrfP(i,j,1)=R(1); SrfP(i,j,2)=R(2); SrfP(i,j,3)=R(3); %Place in Matrix
+    end
+end
+end
+function [z,r,residual]=fitcircle(x,varargin)
 % Obtained from "fitcircle.m" from mathworks file exchange
 % https://www.mathworks.com/matlabcentral/fileexchange/15060-fitcircle-m
 
 %FITCIRCLE    least squares circle fit
-%   
+%
 %   [Z, R] = FITCIRCLE(X) fits a circle to the N points in X minimising
 %   geometric error (sum of squared distances from the points to the fitted
 %   circle) using nonlinear least squares (Gauss Newton)
@@ -754,7 +978,7 @@ function [z, r, residual] = fitcircle(x, varargin)
 %
 %   [Z, R] = FITCIRCLE(X, Property, Value, ...) allows parameters to be
 %   passed to the internal Gauss Newton method. Property names can be
-%   supplied as any unambiguous contraction of the property name and are 
+%   supplied as any unambiguous contraction of the property name and are
 %   case insensitive, e.g. FITCIRCLE(X, 't', 1e-4) is equivalent to
 %   FITCIRCLE(X, 'tol', 1e-4). Valid properties are:
 %
@@ -768,7 +992,7 @@ function [z, r, residual] = fitcircle(x, varargin)
 %           Gauss Newton converges when the relative change in the solution
 %           is less than tol
 %
-%   [X, R, RES] = fitcircle(...) returns the 2 norm of the residual from 
+%   [X, R, RES] = fitcircle(...) returns the 2 norm of the residual from
 %   the least squares fit
 %
 %   Example:
@@ -800,7 +1024,7 @@ x2 = x(2, :)';
 
 
 % 1) Compute best fit w.r.t. algebraic error using linear least squares
-% 
+%
 % Circle is represented as a matrix quadratic form
 %     ax'x + b'x + c = 0
 % Linear least squares estimate found by minimising Bu = 0 s.t. norm(u) = 1
@@ -845,7 +1069,7 @@ end
         nIts  = 0;
         
         for nIts = 1:params.maxits
-            % Find the function and Jacobian 
+            % Find the function and Jacobian
             [f, J] = sys(u);
             
             % Solve for the step and update u
@@ -874,7 +1098,7 @@ end
             %SYS   Nonlinear system to be minimised - the objective
             %function is the distance to each point from the fitted circle
             %contained in u
-
+            
             % Objective function
             f = (sqrt(sum((repmat(u(1:2), 1, m) - x).^2)) - u(3))';
             
@@ -887,8 +1111,8 @@ end
 
 % END NESTED FUNCTIONS
 
-end 
-function [x, fNonlinear, params] = parseinputs(x, params, varargin)
+end
+function [x,fNonlinear,params]=parseinputs(x,params,varargin)
 % Make sure x is 2xN where N > 3
 if size(x, 2) == 2
     x = x';
@@ -911,8 +1135,8 @@ switch length(varargin)
     % No arguments means a nonlinear least squares with defaul parameters
     case 0
         return
-       
-    % One argument can only be 'linear', specifying linear least squares
+        
+        % One argument can only be 'linear', specifying linear least squares
     case 1
         if strncmpi(varargin{1}, 'linear', length(varargin{1}))
             fNonlinear = false;
@@ -921,16 +1145,16 @@ switch length(varargin)
             error('fitcircle:UnknownOption', 'Unknown Option')
         end
         
-    % Otherwise we're left with user supplied parameters for Gauss Newton
+        % Otherwise we're left with user supplied parameters for Gauss Newton
     otherwise
         if rem(length(varargin), 2) ~= 0
             error('fitcircle:propertyValueNotPair', ...
                 'Additional arguments must take the form of Property/Value pairs');
         end
-
+        
         % Cell array of valid property names
         properties = {'maxits', 'tol'};
-
+        
         while length(varargin) ~= 0
             property = varargin{1};
             value    = varargin{2};
@@ -963,11 +1187,11 @@ switch length(varargin)
             end % switch property
             varargin(1:2) = [];
         end % while
-
+        
 end % switch length(varargin)
 
 end %parseinputs %for fitcircle
-%% functions not in use
+%% functions not in use - ideas not implemented
 function [xyz,Theta,Psi]=CalcSphere(R,Ntheta,Npsi,varargin)
 %INPUT:
 %R - raidus
