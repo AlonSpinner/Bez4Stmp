@@ -202,7 +202,8 @@ classdef Bez4Stmp
             uOp1=size(pCP.p,2); %u order plus 1 (amount of control points in the u direction)
             vOp1=size(pCP.p,1);
             
-            %Draw patches       
+            %Draw patches
+            Waith=waitbar(0,'Rendering . . .');         
             for k=1:PtchAmnt
                 %Evaluate points of patch
                 Pcp=reshape(pCP.v(pCP.p(:,:,k),:),[vOp1,uOp1,3]); %Obtain patch control points. format explained above
@@ -219,14 +220,17 @@ classdef Bez4Stmp
                             'UserData',k);
                     case 'gaussian'
                         K=SurfCurvature(x,y,z);
-                        K=filloutliers(K,'nearest');
                         Handles(k)=surf(Ax,x,y,z,K,'facecolor','interp','edgecolor','none');
+                        fig=figure;
+                        surf(K);
                     case 'mean'
                         [~,H]=SurfCurvature(x,y,z);
                         Handles(k)=surf(Ax,x,y,z,H,'facecolor','interp','edgecolor','none');
                 end               
                 pause(PauseTime);
+                waitbar(k/PtchAmnt,Waith); %update waitbar
             end
+            delete(Waith); %kill waitbar
         end
     end   
     methods (Static)
