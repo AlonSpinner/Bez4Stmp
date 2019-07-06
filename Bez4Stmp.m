@@ -13,13 +13,16 @@ classdef Bez4Stmp
         Xcenter %double [x,y,z].
         CompactNodes %pointCloud mxnx3. Nodes in initial form (before RadialNonRigid registration)
         BlownNodes %pointCloud mxnx3. nodes after CompactNodes have been thorugh RadialNonRigid registration
-        CP %struct of bezier mesh control points containing info of vertices, patches and connectivity
+        CPcyl %struct of bezier mesh control points containing info of vertices, patches and connectivity
+        CPsph
     end
     properties (SetAccess = public) %can be changed by user
         GridLengthFcn=@(R,L) R*(0.5*R/L); %after downsampling: VerticesAmount*(GridLength^2)/(2*pi*R*L)~1 by construction
         BezierPatchAmount=16; %default
-        CakeSlices=4; %default
-        BezierOrder=6; %default
+        SphLayers=2; %default
+        CylLayers=2;
+        Slices=4;
+        BezierOrder=3; %default
         XcenterCalculationMethod='normalSTD'; %default
     end
     methods %public methods, accessible from outside the class
@@ -98,13 +101,17 @@ classdef Bez4Stmp
             
             %Create Compact nodes - nodes before blowing
             %algorithm
-            [Nvert,Ncircum]=MeshNodesAmount(obj.BezierPatchAmount,obj.CakeSlices,obj.BezierOrder);
-            P=BezBellCurve(r/2,2*r,Xcntr(3)+r,Nvert);
-            CompactSphInd=(P(:,2)>Xcntr(3)); CompactCylInd=~CompactSphInd; %boolean arrays [0,0,0,1,1,1,1]
-            xyz=RotateXZcurve(P,Ncircum); %rotate to create double size Nvert x Ncircum x 3
-            xyz(:,:,1)=xyz(:,:,1)+Xcntr(1); xyz(:,:,2)=xyz(:,:,2)+Xcntr(2); %align vertical axis to pass through Xcenter
-            obj.CompactNodes=pointCloud(xyz); %introduce to object parameters
-            CompactSph=xyz(CompactSphInd,:,:); CompactCyl=xyz(CompactCylInd,:,:); %seperate for expansion(blowing) algorithm
+            [Ncyl,Nsph,Ncircum]=MeshNodesAmount(obj.SphLayers,obj.CylLayers,obj.Slices,obj.BezierOrder);
+            SphNodes=CalcSphere(R,Nsph,Ncircum,'Trans',Xcntr,'half',true);
+            CPsph=StumpMesh2CP(SphNodes,obj.BezierOrder);
+            CylNodes=CalcCylinder(R,Xcntr(3),Ncyl,Ncircum);
+            CPcyl=StumpMesh2CP(CylNodes,obj.BezierOrder);
+            
+%             CompactSphInd=(P(:,2)>Xcntr(3)); CompactCylInd=~CompactSphInd; %boolean arrays [0,0,0,1,1,1,1]
+%             xyz=RotateXZcurve(P,Ncircum); %rotate to create double size Nvert x Ncircum x 3
+%             xyz(:,:,1)=xyz(:,:,1)+Xcntr(1); xyz(:,:,2)=xyz(:,:,2)+Xcntr(2); %align vertical axis to pass through Xcenter
+%             obj.CompactNodes=pointCloud(xyz); %introduce to object parameters
+%             CompactSph=xyz(CompactSphInd,:,:); CompactCyl=xyz(CompactCylInd,:,:); %seperate for expansion(blowing) algorithm
             
             %Create BlownNodes - nodes after blowing algorithm
             h=helpdlg(sprintf(['Creating BlownNodes from CompactNodes.\n',...
@@ -113,16 +120,16 @@ classdef Bez4Stmp
             StatSphInd=PntCld.Location(:,3)>Xcntr(3); StatCylInd=~StatSphInd;%boolean arrays [0,0,0,1,1,1,1]
             %Sphere:
             StatSph=PntCld.Location(StatSphInd,:);
-            BlownSph=RadialNonRigidRegistration('Spherical',CompactSph,StatSph,[-r/2,r],Xcntr,'Display','iter'); %blown sphere to be  merged
+            CPsph=RadialOptimization4CP('Spherical',CPsph,StatSph,[-r/2,2*r],Xcntr,'Display','iter'); %blown sphere to be  merged
             %Cylinder:
             StatCyl=PntCld.Location(StatCylInd,:);
-            BlownCyl=RadialNonRigidRegistration('Cylinderical',CompactCyl,StatCyl,[-R/2,R],Xcntr,'Display','iter'); %blown cylinder to be  merged
+            CPcyl=RadialOptimization4CP('Cylinderical',CPcyl,StatCyl,[-R/2,2*R],Xcntr,'Display','iter'); 
             %Merge:
-            obj.BlownNodes=pointCloud(cat(1,BlownCyl,BlownSph)); %merge
             close(h); %close helpdlg
             
             %create CP struct and introduce to parameters
-            obj.CP=StumpMesh2CP(obj.BlownNodes,obj.BezierOrder);
+            obj.CPcyl=CPcyl;
+            obj.CPsph=CPsph;
         end
         function Handles=DrawBezierPatches(obj,varargin)
             %draws bezier parameteric surfaces from data stored in obj.CP
@@ -153,7 +160,7 @@ classdef Bez4Stmp
             %Down] in the row. if a patch has no connectivity in a certin direction,
             %the related value will be 0.
             
-            pCP=obj.CP; %pCP - private CP (just to shorten writing without referencing from obj)
+            pCP=obj.CPcyl; %pCP - private CP (just to shorten writing without referencing from obj)
             
             %default values
             N=30; Curvature='none'; PauseTime=0;
@@ -227,6 +234,86 @@ classdef Bez4Stmp
                 end               
                 pause(PauseTime);
             end
+            
+            
+            
+            pCP=obj.CPsph; %pCP - private CP (just to shorten writing without referencing from obj)
+            
+            %default values
+            N=30; Curvature='none'; PauseTime=0;
+            %Obtain inputs
+            for ind=1:2:length(varargin)
+                comm=lower(varargin{ind});
+                switch comm
+                    case 'n'
+                        N=varargin{ind+1};
+                    case 'ax'
+                        Ax=varargin{ind+1};
+                    case 'color'
+                        Color=varargin{ind+1};
+                    case 'curvature'
+                        Curvature=varargin{ind+1};
+                    case 'pausetime'
+                        PauseTime=varargin{ind+1};
+                end
+            end
+            
+            %Check input validity and create color matrix if required (==if
+            %drawing is NOT by curvature)
+            PtchAmnt=size(pCP.p,3);
+            if strcmpi(Curvature,'none')  %if Curvature wasnt provided or set to "none"
+                if ~exist('Color','var') || isempty(Color) %if color wasnt provided
+                    PtchColor=lines(PtchAmnt);
+                else
+                    PtchColor=repmat(Color,PtchAmnt,1); %if color was provided
+                end
+            else %if Curvature was provided and set to "gaussian"/"mean"
+                if exist('Color','var') %if color exists, return error
+                    error('Color can only be provided if curvature is set to "none"');
+                end
+            end
+            
+            %create axes if not given
+            if ~exist('Ax','var') || isempty(Ax)
+                Fig=figure('color',[0,0,0]);
+                Ax=axes(Fig,'color',[0,0,0],'ZColor',[1,1,1],'XColor',[1,1,1],'YColor',[1,1,1]);
+                xlabel(Ax,'x'); ylabel(Ax,'y'); zlabel(Ax,'z');
+                axis(Ax,'equal'); grid(Ax,'on'); hold(Ax,'on'); view(Ax,3);
+            end
+            
+            %initalization for drawing patches 
+            Handles=gobjects(1,PtchAmnt); %initalize handle array
+            uOp1=size(pCP.p,2); %u order plus 1 (amount of control points in the u direction)
+            vOp1=size(pCP.p,1);
+            
+            %Draw patches       
+            for k=1:PtchAmnt
+                %Evaluate points of patch
+                Pcp=reshape(pCP.v(pCP.p(:,:,k),:),[vOp1,uOp1,3]); %Obtain patch control points. format explained above
+                Psrfp=BezPtchCP2SrfP(Pcp,N); %compute surface points
+                x=Psrfp(:,:,1); y=Psrfp(:,:,2); z=Psrfp(:,:,3);
+               
+                %Draw evaluated points with surf command
+                %Note: switch coded in forloop to allow cool "build up" graphics
+                        %when plotting
+                switch Curvature
+                    case 'none'
+                        Handles(k)=surf(Ax,x,y,z,...
+                            'facecolor',PtchColor(k,:),'edgecolor','none','facealpha',0.6,...
+                            'UserData',k);
+                    case 'gaussian'
+                        K=SurfCurvature(x,y,z);
+                        K=filloutliers(K,'nearest');
+                        Handles(k)=surf(Ax,x,y,z,K,'facecolor','interp','edgecolor','none');
+                    case 'mean'
+                        [~,H]=SurfCurvature(x,y,z);
+                        Handles(k)=surf(Ax,x,y,z,H,'facecolor','interp','edgecolor','none');
+                end               
+                pause(PauseTime);
+            end
+            
+            
+            
         end
     end   
     methods (Static)
@@ -527,149 +614,27 @@ AbvPtCld=select(PtCld,pass);
 Xcenter=[mean(AbvPtCld.Location(:,[1,2])),Znode];
 
 end
-function [Nvert,Ncircum]=MeshNodesAmount(PatchAmount,CakeSlices,BezierOrder)
+function [Ncyl,Nsph,Ncircum]=MeshNodesAmount(SphLayers,CylLayers,Slices,BezierOrder)
 %Input:
-%PatchAmount - amount of bezier patches to be formed
-%CakeSlices - amount of bezier patches on the circumference in a given
-%CakeLayer
+%CylLayers, SphLayers - amount of layers in spherical/cylinderical part
+%Slices - amount of bezier patches on the circumference in a given
+%Layer
 %BezierOrder - polynomial order of bezier patches (symmeterical for both
 %parameters)
 
 %Output:
-%Nvert - amount of points in a vertical line (defacto z direction)
+%Ncyl - amount of points in a vertical line (defacto z direction) in
+%cylinderical part
+%Nsph - amount of points in a vertical line (defacto z direction) in
+%spherical part
 %Ncircm - amount of points in a horizontal (circumference of stump) line
 
-%Ncircum=(BezierOrder+1)+(CakeLayers-1)*BezierOrder=CakeLayers*BezierOrder
-%Nvert=(BezierOrder+1)+(CakeSlices-2)*BezierOrder+(BezierOrder-1)=CakeSlices*BezierOrder+1
+%Ncircum=(BezierOrder+1)+(Slices-1)*BezierOrder=CakeLayers*BezierOrder
+%Nvert=(BezierOrder+1)+(Layers-2)*BezierOrder+(BezierOrder-1)=CakeSlices*BezierOrder+1
 
-if mod(PatchAmount,CakeSlices), error('PatchAmount must be a multiplyer of CakeSlices'); end
-CakeLayers=PatchAmount/CakeSlices;
-Nvert=CakeLayers*BezierOrder+1;
-Ncircum=CakeSlices*BezierOrder;
-end
-function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Rbounds,Xcenter,varargin)
-%Blow up MovPntCld to StaticPntCld using fmincon (optimization) on
-%Hausdorff distance to register MovPntCld onto StaticPntCld.
-%Algorithm works in two steps:
-%--rough registration to fit all MovPntCld with the same radius of expansion
-%--a fine registration with fits different radii to different points.
-
-%two methods for radial registration in this code:
-%--cylinderical: radial registration from the z axis
-%--spherical: radial registration from a given point
-
-%Algorithm Assumption:
-%--MovPntCld is bounded within StaticPntCld.
-%--to register MovPntCld onto StaticPntCLd one must expand MovPntCld radially
-%from a given point/axis.
-
-%Example for expansion from a given axis:
-%|  <-|   |->  |
-%|  <-|   |->  |
-%|  <-|   |->  |
-
-%Input:
-%Method - 'Cylinderical'/'Spherical'
-%StaticPntCld - Point cloud in format of [x,y,z] (mx3) OR pointCloud
-%object with similar .Location value
-%MovPntCld - Point cloud in format mx3 or mxnx3 where the 3~[x,y,z]
-%OR pointCloud object with similar.Location value
-%RBounds - [Minimal radius,Maximal radius] to add to a point in MovPntCld
-%Xcenter - [x,y,z] mx3 point in 3D space. if spherical mehthod was chosen it
-%is the point from which radial expansion happens about. if cylinderical
-%method was chosen, Xcenter(1,2) is the [x,y] coordante where the centeral axis passes
-%through and expansion happens about
-
-%Varargin inputs:
-%DiffMinChange/DiffMaxChange - double, scalar. min/max change in radial
-%values of points
-%MaxIterations - integer,scalar.
-%Display - 'none'/'iter/'final'. displays data in fmincon. see fmincon
-%options for more
-%OutputClass - 'double'/'pointCloud'. default set to 'double'
-
-%Output:
-%BlownPntCld - point cloud size format as MovPntCld(input). class may vary
-%depending on Varargin input Outputclass choice.
-
-%varargin input and their defaults
-DeltaR=Rbounds(2)-Rbounds(1);
-DiffMinChange=DeltaR/1000; DiffMaxChange=DeltaR/10; MaxIterations=20;
-Display='none'; OutputClass='double';
-for ind=1:2:length(varargin)
-    comm=lower(varargin{ind});
-    switch comm
-        case 'diffminchange'
-            DiffMinChange=varargin{ind+1};
-        case 'diffmaxchange'
-            DiffMaxChange=varargin{ind+1};
-        case 'maxiterations'
-            MaxIterations=varargin{ind+1};
-        case 'display'
-            Display=varargin{ind+1};
-        case 'outputclass'
-            OutputClass=varargin{ind+1};
-    end
-end
-%Default variables
-if strcmpi(Method,'Spherical') && (~exist('Xcenter','var') || isempty(Xcenter))
-    error('You must include Xcenter if spherical method was chosen. See varargin inputs');
-end
-
-%if point clouds give in uncomfi formats, change them
-%StaticPntCld needs to be pointCloud object for cost function (use of
-%findNearestNeighbors)
-%MovPntCld should be in format mx3 or mxnx3 where the 3~[x,y,z]
-if isa(MovPntCld,'pointCloud'), MovPntCld=MovPntCld.Location; end
-if ~isa(StaticPntCld,'pointCloud'), StaticPntCld=pointCloud(StaticPntCld); end
-
-%reshape MovPntCld to mx3 and save original size to reshape back to it if
-%required
-sz=size(MovPntCld);
-if numel(sz)>2, MovPntCld=reshape(MovPntCld,[],3); end
-m=size(MovPntCld,1); %find amount of points to move
-
-%find t - matrix mx3 of radial direction per point
-switch lower(Method)
-    case 'spherical'
-        t=(MovPntCld-Xcenter)./vecnorm(MovPntCld-Xcenter,2,2);
-    case 'cylinderical'
-        xy=MovPntCld(:,[1,2]);
-        t=[xy-Xcenter(1:2),zeros(m,1)]./vecnorm(xy-Xcenter(1:2),2,2);
-end
-
-fun=@(r) CostFcn(MovPntCld,StaticPntCld,t,r);
-options = optimoptions('fmincon','Algorithm','interior-point','Display',Display,...
-    'DiffMaxChange',DiffMaxChange,'DiffMinChange',DiffMinChange,...
-    'MaxIterations',MaxIterations,'MaxFunctionEvaluations',MaxIterations*m);
-%Rough registration
-lb=Rbounds(1);
-ub=Rbounds(2);
-r0=DiffMinChange;
-rRough=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
-%Fine registration
-lb=Rbounds(1)*ones(m,1);
-ub=Rbounds(2)*ones(m,1);
-r0=rRough*ones(m,1);
-rFine=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
-
-%Create output
-BlownPntCld=MovPntCld+t.*rFine;
-if numel(sz)>2, BlownPntCld=reshape(BlownPntCld,sz); end
-if strcmpi(OutputClass,'pointCloud'), BlownPntCld=pointCloud(BlownPntCld); end
-
-    function Cost=CostFcn(MovPntCld,StaticPntCld,t,r)
-        %note: Nested functions variables who share a common name with
-        %their parent function will become global. for such reason, 'N' was
-        %used instead of 'm'
-        N=size(MovPntCld,1);
-        Cost=0;
-        points=MovPntCld+t.*r;
-        for i=1:N
-            [~,d]=findNearestNeighbors(StaticPntCld,points(i,:),1);
-            Cost=Cost+d^2;
-        end
-    end
+Ncyl=CylLayers*BezierOrder+1;
+Nsph=SphLayers*BezierOrder+1;
+Ncircum=Slices*BezierOrder;
 end
 function CP=StumpMesh2CP(MeshNodes,BezO)
 %Input:
@@ -751,6 +716,120 @@ end
 CP.v=V;
 CP.p=P;
 CP.c=C;
+end
+function CP=RadialOptimization4CP(Method,CP,StaticPntCld,Rbounds,Xcenter,varargin)
+%Blow up CP.v to so the evaluated bezier surfaces register to StaticPntCld using fmincon (optimization)
+%Algorithm works in two steps:
+%--rough optimization to fit all CP.v with the same radius of expansion
+%--a fine optimization that fits different radii to different vertices
+
+%two methods for radial optimization in this code:
+%--cylinderical: radial optimization from the z axis
+%--spherical: radial optimization from a given point
+
+%Algorithm Assumption:
+%--CP.v are bounded within StaticPntCld.
+%--to register beier surfaces onto StaticPntCLd one must expand CP.v radially
+%from a given point/axis.
+
+%Example for expansion from a given axis:
+%|  <-|   |->  |
+%|  <-|   |->  |
+%|  <-|   |->  |
+
+%Input:
+%Method - 'Cylinderical'/'Spherical'
+%StaticPntCld - Point cloud in format of [x,y,z] (mx3) OR pointCloud
+%object with similar .Location value
+%CP.v - see notes below
+%OR pointCloud object with similar.Location value
+%RBounds - [Minimal radius,Maximal radius] to add to a point in MovPntCld
+%Xcenter - [x,y,z] mx3 point in 3D space. if spherical mehthod was chosen it
+%is the point from which radial expansion happens about. if cylinderical
+%method was chosen, Xcenter(1,2) is the [x,y] coordante where the centeral axis passes
+%through and expansion happens about
+
+%Varargin inputs:
+%DiffMinChange/DiffMaxChange - double, scalar. min/max change in radial
+%values of points
+%MaxIterations - integer,scalar.
+%Display - 'none'/'iter/'final'. displays data in fmincon. see fmincon
+%options for more
+
+%Output:
+%CP - updated, optimized CP
+
+%varargin input and their defaults
+DeltaR=Rbounds(2)-Rbounds(1);
+DiffMinChange=DeltaR/1000; DiffMaxChange=DeltaR/10; MaxIterations=20;
+Display='none';
+for ind=1:2:length(varargin)
+    comm=lower(varargin{ind});
+    switch comm
+        case 'diffminchange'
+            DiffMinChange=varargin{ind+1};
+        case 'diffmaxchange'
+            DiffMaxChange=varargin{ind+1};
+        case 'maxiterations'
+            MaxIterations=varargin{ind+1};
+        case 'display'
+            Display=varargin{ind+1};
+    end
+end
+%Default variables
+if strcmpi(Method,'Spherical') && (~exist('Xcenter','var') || isempty(Xcenter))
+    error('You must include Xcenter if spherical method was chosen. See varargin inputs');
+end
+
+%if point clouds give in uncomfi formats, change them
+%StaticPntCld needs to be pointCloud object for cost function (use of
+%findNearestNeighbors)
+if ~isa(StaticPntCld,'pointCloud'), StaticPntCld=pointCloud(StaticPntCld); end
+
+
+m=size(CP.v,1); %find amount of points to move
+
+%find t - matrix mx3 of radial direction per point
+switch lower(Method)
+    case 'spherical'
+        t=(CP.v-Xcenter)./vecnorm(CP.v-Xcenter,2,2);
+    case 'cylinderical'
+        xy=CP.v(:,[1,2]);
+        t=[xy-Xcenter(1:2),zeros(m,1)]./vecnorm(xy-Xcenter(1:2),2,2);
+end
+
+N=size(CP.p,1);
+fun=@(r) CostFcn(CP,StaticPntCld,t,r,2*N);
+options = optimoptions('fmincon','Algorithm','interior-point','Display',Display,...
+    'DiffMaxChange',DiffMaxChange,'DiffMinChange',DiffMinChange,...
+    'MaxIterations',MaxIterations,'MaxFunctionEvaluations',MaxIterations*m);
+%Rough registration
+lb=Rbounds(1);
+ub=Rbounds(2);
+r0=DiffMinChange;
+rRough=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
+%Fine registration
+lb=Rbounds(1)*ones(m,1);
+ub=Rbounds(2)*ones(m,1);
+r0=rRough*ones(m,1);
+rFine=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
+
+%Create output
+CP.v=CP.v+t.*rFine;
+
+    function Cost=CostFcn(CP,StaticPntCld,t,r,N)
+        %note: Nested functions variables who share a common name with
+        %their parent function will become global. for such reason, 'N' was
+        %used instead of 'm'
+        Cost=0;
+        CP.v=CP.v+t.*r;
+        [x,y,z]=CombinePatches(CP,N);
+        for i=1:numel(x)
+            pnti=[x(i),y(i),z(i)];
+            [~,d]=findNearestNeighbors(StaticPntCld,pnti,1);
+            Cost=Cost+d^2;
+        end
+    end
 end
 %% extra functions (note: can't call one method from another)
 function varargout=stlread(file)
@@ -1307,8 +1386,47 @@ H = reshape(H,s,t);
 Pmax = H + sqrt(H.^2 - K);
 Pmin = H - sqrt(H.^2 - K);
 end
+function [x,y,z]=CombinePatches(CP,N)
+%Input:
+%CP is a struct with:
+
+%CP.v - vertices [x,y,z] ((Nvert*Ncircum)x3) format
+
+%CP.p -  patches. size([BezO+1,BezO+1,Patch Amount]).
+%Values are row index of points in CP.v. depth index is patch indexing.
+
+%CP.c - patch connectivity. size([Ptch Amount,4]). The row index of CP.c indicates the patch involved.
+%Values are patch indexes. a patch can have 4 neighbors and they are ordered [Left, Right, Up,
+%Down] in the row. if a patch has no connectivity in a certin direction,
+%the related value will be 0.
+
+%N - number of points evaluated for each patch is N^2
+
+%Output:
+%x,y,z matrices size PtchAmnt*N x N of all patches combined
+
+
+%surface produced by [x,y,z] is distorted. no real advantage
+
+%Input:
+%CP struct containing v,p,c matrices
+%N - number of points evaluated per patch are N^2
+
+%output:
+%x,y,z matrices containing data of all patches combined.
+PtchAmnt=size(CP.p,3);
+sz=size(CP.p);
+[x,y,z]=deal(zeros(PtchAmnt*N,N));
+for k=1:PtchAmnt
+    Pcp=reshape(CP.v(CP.p(:,:,k),:),[sz(1:2),3]); %Obtain patch control points. format explained above
+    Psrfp=BezPtchCP2SrfP(Pcp,N);
+    x((k-1)*N+1:k*N,:,:)=Psrfp(:,:,1);
+    y((k-1)*N+1:k*N,:,:)=Psrfp(:,:,2);
+    z((k-1)*N+1:k*N,:,:)=Psrfp(:,:,3);
+end
+end
 %% functions not in use - ideas not implemented
-function [xyz,Theta,Psi]=CalcSphere(R,Ntheta,Npsi,varargin)
+function [xyz,Psi,Theta]=CalcSphere(R,Npsi,Ntheta,varargin)
 %INPUT:
 %R - raidus
 %Ntheta - amount of theta points (descrization). theta ranges [0,2pi]
@@ -1317,13 +1435,15 @@ function [xyz,Theta,Psi]=CalcSphere(R,Ntheta,Npsi,varargin)
 %Varagin:
 %Trans - translation [x,y,z]
 %Half - true/false. true - plots half dome (pointing up)
+%Edges - true/false. true - divide psi differently in range [0,pi] so it wont have
+                        %the values of 0,pi
 
 %OUTPUT:
-%xyz - size Ntheta x Npsi x 3 where the depth dimension is constructed as [x,y,z]
+%xyz - size Npsi x Ntheta x 3 where the depth dimension is constructed as [x,y,z]
 %Theta, Psi. matrices of size Ntheta x Npsi
 
 %default values:
-Half=false;
+Half=false; Edges=true;
 %Obtain inputs
 for ind=1:2:length(varargin)
     comm=lower(varargin{ind});
@@ -1332,14 +1452,20 @@ for ind=1:2:length(varargin)
             Trans=varargin{ind+1};
         case 'half'
             Half=varargin{ind+1};
+        case 'edges'
+            Edges=varargin{ind+1};
     end
 end
 
 %create parameter vectors
 theta=linspace(0,2*pi,Ntheta+1);
 theta=theta(2:end); %first and last point are the same. remove first point
-psi=linspace(0,pi-Half*pi/2,Npsi+2);
-psi=psi(2:end-1); %remove edges. produced points will be redundent (as many as Npsi*2)
+if ~Edges %Edges==False
+    psi=linspace(0,pi-Half*pi/2,Npsi+2);
+    psi=psi(2:end-1); %remove edges. produced points will be redundent (as many as Npsi*2)
+else
+    psi=linspace(0,pi-Half*pi/2,Npsi);
+end
 
 %construct mesh
 [Theta,Psi]=meshgrid(theta,psi);
@@ -1354,7 +1480,7 @@ if exist('Trans','var') && ~isempty(Trans)
 end
 xyz=cat(3,X,Y,Z);
 end
-function [xyz,Theta,Z]=CalcCylinder(R,L,Ntheta,Nz,varargin)
+function [xyz,Z,Theta]=CalcCylinder(R,L,Nz,Ntheta,varargin)
 %INPUT:
 %R - raidus
 %Ntheta - amount of theta points (descrization). theta ranges [0,2pi]
@@ -1364,7 +1490,7 @@ function [xyz,Theta,Z]=CalcCylinder(R,L,Ntheta,Nz,varargin)
 %Trans - translation [x,y,z]
 
 %OUTPUT:
-%xyz - size Ntheta x Nz x 3 where the depth dimension is constructed as [x,y,z]
+%xyz - size Nz x Ntheta x 3 where the depth dimension is constructed as [x,y,z]
 %Theta, Z. matrices of size Ntheta x Nz
 
 %Obtain inputs
@@ -1456,25 +1582,127 @@ zxhull=zy(convhull(zx),:);
 
 r=mean([rzx,rzy]);
 end
-function [x,y,z]=CombinePatches(CP,N)
-%surface produced by [x,y,z] is distorted. no real advantage
+function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Rbounds,Xcenter,varargin)
+%Blow up MovPntCld to StaticPntCld using fmincon (optimization) on
+%Hausdorff distance to register MovPntCld onto StaticPntCld.
+%Algorithm works in two steps:
+%--rough registration to fit all MovPntCld with the same radius of expansion
+%--a fine registration with fits different radii to different points.
+
+%two methods for radial registration in this code:
+%--cylinderical: radial registration from the z axis
+%--spherical: radial registration from a given point
+
+%Algorithm Assumption:
+%--MovPntCld is bounded within StaticPntCld.
+%--to register MovPntCld onto StaticPntCLd one must expand MovPntCld radially
+%from a given point/axis.
+
+%Example for expansion from a given axis:
+%|  <-|   |->  |
+%|  <-|   |->  |
+%|  <-|   |->  |
 
 %Input:
-%CP struct containing v,p,c matrices
-%N - number of points evaluated per patch are N^2
+%Method - 'Cylinderical'/'Spherical'
+%StaticPntCld - Point cloud in format of [x,y,z] (mx3) OR pointCloud
+%object with similar .Location value
+%MovPntCld - Point cloud in format mx3 or mxnx3 where the 3~[x,y,z]
+%OR pointCloud object with similar.Location value
+%RBounds - [Minimal radius,Maximal radius] to add to a point in MovPntCld
+%Xcenter - [x,y,z] mx3 point in 3D space. if spherical mehthod was chosen it
+%is the point from which radial expansion happens about. if cylinderical
+%method was chosen, Xcenter(1,2) is the [x,y] coordante where the centeral axis passes
+%through and expansion happens about
 
-%output:
-%x,y,z matrices containing data of all patches combined.
+%Varargin inputs:
+%DiffMinChange/DiffMaxChange - double, scalar. min/max change in radial
+%values of points
+%MaxIterations - integer,scalar.
+%Display - 'none'/'iter/'final'. displays data in fmincon. see fmincon
+%options for more
+%OutputClass - 'double'/'pointCloud'. default set to 'double'
 
-PtchAmnt=size(CP.p,3);
-uOp1=size(CP.p,2); %u order plus 1 (amount of control points in the u direction)
-vOp1=size(CP.p,1);
-[x,y,z]=deal(zeros(PtchAmnt*N,N));
-for k=1:PtchAmnt
-    Pcp=reshape(CP.v(CP.p(:,:,k),:),[vOp1,uOp1,3]); %Obtain patch control points. format explained above
-    Psrfp=BezPtchCP2SrfP(Pcp,N);
-    x((k-1)*N+1:k*N,:,:)=Psrfp(:,:,1);
-    y((k-1)*N+1:k*N,:,:)=Psrfp(:,:,2);
-    z((k-1)*N+1:k*N,:,:)=Psrfp(:,:,3);
+%Output:
+%BlownPntCld - point cloud size format as MovPntCld(input). class may vary
+%depending on Varargin input Outputclass choice.
+
+%varargin input and their defaults
+DeltaR=Rbounds(2)-Rbounds(1);
+DiffMinChange=DeltaR/1000; DiffMaxChange=DeltaR/10; MaxIterations=20;
+Display='none'; OutputClass='double';
+for ind=1:2:length(varargin)
+    comm=lower(varargin{ind});
+    switch comm
+        case 'diffminchange'
+            DiffMinChange=varargin{ind+1};
+        case 'diffmaxchange'
+            DiffMaxChange=varargin{ind+1};
+        case 'maxiterations'
+            MaxIterations=varargin{ind+1};
+        case 'display'
+            Display=varargin{ind+1};
+        case 'outputclass'
+            OutputClass=varargin{ind+1};
+    end
 end
+%Default variables
+if strcmpi(Method,'Spherical') && (~exist('Xcenter','var') || isempty(Xcenter))
+    error('You must include Xcenter if spherical method was chosen. See varargin inputs');
+end
+
+%if point clouds give in uncomfi formats, change them
+%StaticPntCld needs to be pointCloud object for cost function (use of
+%findNearestNeighbors)
+%MovPntCld should be in format mx3 or mxnx3 where the 3~[x,y,z]
+if isa(MovPntCld,'pointCloud'), MovPntCld=MovPntCld.Location; end
+if ~isa(StaticPntCld,'pointCloud'), StaticPntCld=pointCloud(StaticPntCld); end
+
+%reshape MovPntCld to mx3 and save original size to reshape back to it if
+%required
+sz=size(MovPntCld);
+if numel(sz)>2, MovPntCld=reshape(MovPntCld,[],3); end
+m=size(MovPntCld,1); %find amount of points to move
+
+%find t - matrix mx3 of radial direction per point
+switch lower(Method)
+    case 'spherical'
+        t=(MovPntCld-Xcenter)./vecnorm(MovPntCld-Xcenter,2,2);
+    case 'cylinderical'
+        xy=MovPntCld(:,[1,2]);
+        t=[xy-Xcenter(1:2),zeros(m,1)]./vecnorm(xy-Xcenter(1:2),2,2);
+end
+
+fun=@(r) CostFcn(MovPntCld,StaticPntCld,t,r);
+options = optimoptions('fmincon','Algorithm','interior-point','Display',Display,...
+    'DiffMaxChange',DiffMaxChange,'DiffMinChange',DiffMinChange,...
+    'MaxIterations',MaxIterations,'MaxFunctionEvaluations',MaxIterations*m);
+%Rough registration
+lb=Rbounds(1);
+ub=Rbounds(2);
+r0=DiffMinChange;
+rRough=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
+%Fine registration
+lb=Rbounds(1)*ones(m,1);
+ub=Rbounds(2)*ones(m,1);
+r0=rRough*ones(m,1);
+rFine=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
+
+%Create output
+BlownPntCld=MovPntCld+t.*rFine;
+if numel(sz)>2, BlownPntCld=reshape(BlownPntCld,sz); end
+if strcmpi(OutputClass,'pointCloud'), BlownPntCld=pointCloud(BlownPntCld); end
+
+    function Cost=CostFcn(MovPntCld,StaticPntCld,t,r)
+        %note: Nested functions variables who share a common name with
+        %their parent function will become global. for such reason, 'N' was
+        %used instead of 'm'
+        N=size(MovPntCld,1);
+        Cost=0;
+        points=MovPntCld+t.*r;
+        for i=1:N
+            [~,d]=findNearestNeighbors(StaticPntCld,points(i,:),1);
+            Cost=Cost+d^2;
+        end
+    end
 end
