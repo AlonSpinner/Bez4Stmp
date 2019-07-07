@@ -1,17 +1,23 @@
-%Calculate 
+%% Calculate 
 Stmp=Bez4Stmp('Roie.stl');
 
-%Draw Patches
+%% Update
+Stmp.SphLayers=3;
+Stmp.CylLayers=2;
+Stmp.BezierOrder=3;
+Stmp=Stmp.UpdateObj;
+
+%% Draw Patches
 Stmp.CP.DrawBezierPatches;
 Stmp.CP.DrawBezierPatches('curvature','gaussian','PauseTime',0);
 
-%Draw point clouds - orginial, compact and surfaces
+%% Draw point clouds - orginial, compact and surfaces
 Ax=Stmp.DrawPointCloud(Stmp.PointCloud,'color',[1,0,0],'msize',20); %original
 Stmp.DrawPointCloud(Stmp.Compact,'color',[0,0,1],'msize',20,'Ax',Ax); %compact
 Stmp.DrawPointCloud(Stmp.CP.CombinePatches(30),'color',[1,1,1],'Ax',Ax); %compact
 Stmp.DrawPointCloud(Stmp.CP.Vertices,'color',[0,1,0],'Ax',Ax,'msize',20); %CP vertices
 
-%Hausdorff distance with plot
+%% Hausdorff distance with plot
 P=Stmp.PointCloud.Location;
 Q=Stmp.CP.CombinePatches(30);
 szP=size(P); szQ=size(Q);
@@ -26,7 +32,7 @@ m=mean([Phd;Qhd]);
 Xcntr=Stmp.Xcenter;
 if m(3)>Xcntr(3), t=(m-Xcntr)/norm(m-Xcntr,2);
 else, t=[(m(1:2)-Xcntr(1:2)),0]/norm(m(1:2)-Xcntr(1:2),2); end
-rhd=dot(Phd-Qhd,t);
+rhd=abs(dot(Phd-Qhd,t));
 %plot
 Ax=Stmp.DrawPointCloud(Stmp.PointCloud,'color',[0,0,1],'msize',15); %original
 Stmp.DrawPointCloud(Stmp.CP.CombinePatches(30),'color',[1,1,1],'Ax',Ax); %compact

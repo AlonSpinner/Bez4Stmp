@@ -16,7 +16,6 @@ classdef Bez4Stmp
     end
     properties (SetAccess = public) %can be changed by user
         GridLengthFcn=@(R,L) R*(0.5*R/L); %after downsampling: VerticesAmount*(GridLength^2)/(2*pi*R*L)~1 by construction
-        BezierPatchAmount=16; %default
         SphLayers=1; %default
         CylLayers=1;
         Slices=4;
@@ -34,7 +33,7 @@ classdef Bez4Stmp
             
             %Varargin Input:
             %Time - true/false. measure time of function process (default== true)
-            %MaxOptimizationIterions - default (30)
+            %MaxOptimizationIterions - (default 30)
             
             %Output:
             %initalized class
