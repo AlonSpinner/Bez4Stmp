@@ -23,7 +23,7 @@ classdef BezCP
             %BezO=3 <-> 4 control points in each parameter
             
             %Varargin Input:
-            %Method - 'Circular'/'Block'. default set to circular
+            %Method - 'Circular'/'CircularWithCap'/'Block'. Block
             %Circular - stich patches to close a cylinderical surface.
             %stiching occures across columns of MeshNodes:
             %first patch and last patch both consist of
@@ -46,7 +46,7 @@ classdef BezCP
             
             if isa(MeshNodes,'pointCloud'); MeshNodes=MeshNodes.Location; end
             
-            Method='circular'; %default
+            Method='block'; %default
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
                 switch comm
@@ -61,9 +61,81 @@ classdef BezCP
             NodeAmnt=M*N;
             
             %Build V - vertices
+            Iv=reshape(1:NodeAmnt,[M,N]); %indexing matrix to vertices in ControlPoints
             V=reshape(MeshNodes,[],3); %vertices [x,y,z] (mx3) format
             
             switch lower(Method)
+                case 'circularwithcap'
+                    Layers=(M-1)/BezO; %amount of patches in a single layer
+                    Slices=N/BezO; %amount of layers of patches
+                    %check validity
+                    if mod(Layers,1) || mod(Slices,1)
+                        error(['for the given method, (M-1)/BezO and N/BezO must both be integers',...
+                            'where MeshNodes is of size N x M x 3']);
+                    end
+                    if 4*BezO~=BezO*Slices
+                       error('for the given method, 4*BezO must equal N')
+                       %amount of nodes on circumference of patch grid BezO+1 x BezO+1:
+                       %2*(BezO+1)+2*(BezO+1-2)=4*BezO
+                       %amount of nodes on circumference of shape: N
+                    end
+                    PtchAmnt=Slices*Layers+1; %+1 for cap
+                    
+                    %add cap vertices to V
+                    CapCircum=Iv(end,:); %indcies of cap circumference nodes in V
+                    Vcap=zeros((BezO-1)^2,3); %initalize vertices of cap
+                    for j=2:BezO %linear interpolation
+                        for i=2:BezO
+                            p1=V(CapCircum(BezO+j),:);
+                            p2=V(CapCircum(end-j+2),:);
+                            Vcap((i-1)*(j-1),:)=(p1*i+p2*(BezO+1-i))/(BezO+1);
+                        end
+                    end
+                    V=[V;Vcap]; %add to V
+                    
+                    %Build P - patches
+                    P=zeros(BezO+1,BezO+1,PtchAmnt);
+                    k=1;
+                    for n=1:BezO:(N-2*BezO+1) %go "block" by "block" and collect it into P
+                        for m=1:BezO:(M-BezO)
+                            P(:,:,k)=Iv(m:m+BezO,n:n+BezO);
+                            k=k+1;
+                        end
+                    end
+                    
+                    %add the blocks that stich the circumference togther
+                    for m=1:BezO:(M-BezO)
+                        P(:,:,k)=[Iv(m:m+BezO,(N-BezO+1):N),Iv(m:m+BezO,1)];
+                        k=k+1;
+                    end
+                    
+                    %add cap
+                    %sides
+                    P(1:BezO+1,1,k)=CapCircum(1:BezO+1); %left
+                    P(end,2:end-1,k)=CapCircum(BezO+2:2*BezO); %buttom
+                    P(1:BezO+1,end,k)=fliplr(CapCircum(2*BezO+1:3*BezO+1)); %right
+                    P(1,2:end-1,k)=fliplr(CapCircum(3*BezO+2:end)); %top
+                    %middle
+                    for j=2:BezO
+                        for i=2:BezO
+                            P(i,j,k)=(i-1)*(j-1)+NodeAmnt;
+                        end
+                    end
+                                      
+                    %Build C - connectivity
+                    %cap patch has no row in C, but is indexed there
+                    Ip=reshape(1:PtchAmnt-1,[Layers,Slices]); %indexing point in PtchCP. not including cap
+                    Icap=PtchAmnt; %index number of cap patch
+                    C=zeros(PtchAmnt-1,4);
+                    for k=1:(PtchAmnt-1) %run on all patches not including cap
+                        [i,j]=ind2sub(size(Ip),k); %returns indexes [i,j] for patch number k
+                        if i==1, U=Icap; else, U=Ip(i-1,j); end %returns cap patch index if @ top edge
+                        if i==Layers, D=0; else, D=Ip(i+1,j); end %returns 0 if no patch below
+                        if j==1, L=Ip(i,Slices); else, L=Ip(i,j-1); end %remember circularity
+                        if j==Slices, R=Ip(i,1); else, R=Ip(i,j+1); end %remember circularity
+                        C(k,:)=[L,R,U,D];
+                    end
+                
                 case 'circular'
                     Layers=(M-1)/BezO; %amount of patches in a single layer
                     Slices=N/BezO; %amount of layers of patches
@@ -75,7 +147,6 @@ classdef BezCP
                     PtchAmnt=Slices*Layers;
                     
                     %Build P - patches
-                    Iv=reshape(1:NodeAmnt,[M,N]); %indexing matrix to vertices in ControlPoints
                     P=zeros(BezO+1,BezO+1,PtchAmnt);
                     k=1;
                     for n=1:BezO:(N-2*BezO+1) %go "block" by "block" and collect it into P
@@ -113,7 +184,6 @@ classdef BezCP
                     PtchAmnt=Slices*Layers;
                     
                     %Build P - patches
-                    Iv=reshape(1:NodeAmnt,[M,N]); %indexing matrix to vertices in ControlPoints
                     P=zeros(BezO+1,BezO+1,PtchAmnt);
                     k=1;
                     for n=1:BezO:(N-2*BezO+1) %go "block" by "block" and collect it into P

@@ -3,8 +3,9 @@ classdef Bez4Stmp
     %2019.
     %By Yam Ben Natan and Alon Spinner
     properties (SetAccess = private)  %equivalent to "read only" (Getable but not Setable)
-        %all properties below are initalized in constructor       
+        %all properties below are initalized in constructor
         Scan %pointCloud mx3. Point Cloud provided to algorithm
+        T2ZScan %pointCloud mx3. Scan after processing Transform2Z
         PointCloud %pointCloud mx3. PointCloud after processing (Transform2Z and downsampling)
         BoundingCylinderLength %%double 1x1.
         BoundingCylinderRadius %%double 1x1.
@@ -16,21 +17,24 @@ classdef Bez4Stmp
     properties (SetAccess = public) %can be changed by user
         GridLengthFcn=@(R,L) R*(0.5*R/L); %after downsampling: VerticesAmount*(GridLength^2)/(2*pi*R*L)~1 by construction
         BezierPatchAmount=16; %default
-        SphLayers=2; %default
-        CylLayers=2;
+        SphLayers=1; %default
+        CylLayers=1;
         Slices=4;
         BezierOrder=3; %default
         XcenterCalculationMethod='normalSTD'; %default
     end
     methods %public methods, accessible from outside the class
-        function obj=Bez4Stmp(PntCldIn) %Constructor
+        function obj=Bez4Stmp(PntCldIn,varargin) %Constructor
             %Input:
             %PntCldIn - points to xyz double matrix of size mx3 point
             %cloud OR pointCloud class object.
-            
             %depending on it's class, assumes the following:
             %double: xyz double matrix of size mx3 [x,y,z]
             %char: file path
+            
+            %Varargin Input:
+            %Time - true/false. measure time of function process (default== true)
+            %MaxOptimizationIterions - default (30)
             
             %Output:
             %initalized class
@@ -71,7 +75,22 @@ classdef Bez4Stmp
                         ' -file name of stl\n',...
                         ' -file name of .m file containing pointCloud or mx3 double matrix named "xyz"']));
             end
+            
+            %default values:
+            Time=true; MaxOptimizationIterions=20;
+            %Obtain inputs
+            for ind=1:2:length(varargin)
+                comm=lower(varargin{ind});
+                switch comm
+                    case 'time'
+                        Time=varargin{ind+1};
+                    case 'maxoptimizationiterions'
+                        MaxOptimizationIterions=varargin{ind+1};
+                end
+            end
             %% Run
+            if Time, tic; end
+            
             %introduce to parameters before any preprocessing to object
             obj.Scan=pointCloud(xyz);
             %align with z axis, sets base on z=0, sort vertices by z value
@@ -81,15 +100,19 @@ classdef Bez4Stmp
             obj.BoundingCylinderLength=L; %introduce to parameters
             obj.BoundingCylinderRadius=R; %introduce to parameters
             
-            %Create PointCloud - post preprocessing point cloud object
+            %Create pointCloud object and introduce to parameters
             PntCld=pointCloud(T2Z_xyz); %create point cloud object from preprocessed point cloud
+            obj.T2ZScan=PntCld; %introduce to parameters
+            
+            %DownSample - final part of preprocessing - and introduce to
+            %parameters
             GridLength=obj.GridLengthFcn(R,L); %obtain voxel edge length by default function
             PntCld=pcdownsample(PntCld,'gridAverage',GridLength); %Downsample by grid legnth
             obj.PointCloud=PntCld; %introduce to parameters
             
             %Find Xcenter - point seperating between sphereical and
             %Cylinderical part
-            Xcntr=FindXcenter(PntCld,L,obj.XcenterCalculationMethod);
+            Xcntr=FindXcenter(PntCld,obj.XcenterCalculationMethod);
             obj.Xcenter=Xcntr; %introduce to parameters
             
             %Find radius of sphereical part
@@ -99,28 +122,97 @@ classdef Bez4Stmp
             %Create Compact Control Points nodes
             minR=min(r,R); maxR=max(r,R);
             [Ncyl,Nsph,Ncircum]=MeshNodesAmount(obj.SphLayers,obj.CylLayers,obj.Slices,obj.BezierOrder);
-            P=CircleBellCrv(minR,L,Ncyl,Nsph);
+            P=CircleBellCrv(minR,L,Ncyl,Nsph,'RemoveTopEdge',true);
             xyz=RotateXZcurve(P,Ncircum); %rotate to create double size Nvert x Ncircum x 3
             xyz(:,:,1)=xyz(:,:,1)+Xcntr(1); xyz(:,:,2)=xyz(:,:,2)+Xcntr(2); %align vertical axis to pass through Xcenter
             obj.Compact=xyz;
             
             %Optimize compact to create CP
-            CompactCP=BezCP(xyz,obj.BezierOrder);
+            CompactCP=BezCP(xyz,obj.BezierOrder,'method','CircularWithCap');
             h=helpdlg(sprintf(['Creating BlownNodes from CompactNodes.\n',...
                 'This might take a few mintues']));
             obj.CP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display','iter',...
-                'MaxIterations',30); 
+                'MaxIterations',MaxOptimizationIterions);
             close(h); %close helpdlg
+            
+            if Time, toc; end
         end
-    end   
+        function obj=UpdateObj(obj,varargin)       
+            %Varargin Input:
+            %Time - true/false. measure time of function process (default== true)
+            %MaxOptimizationIterions - default (30)
+            
+            %Output:
+            %obj - Updates the private access properties after user had changed
+            %the public access properties
+                %Private access properties updated:
+                    %PointCloud  (reminder: GridLengthFcn changes)
+                    %Xcenter     (reminder: Xcenter calculation method can)
+                    %change
+                    %SphereRadius 
+                    %Compact 
+                    %CP
+            
+            %default values:
+            Time=true; MaxOptimizationIterions=20;
+            %Obtain inputs
+            for ind=1:2:length(varargin)
+                comm=lower(varargin{ind});
+                switch comm
+                    case 'time'
+                        Time=varargin{ind+1};
+                    case 'maxoptimizationiterions'
+                        MaxOptimizationIterions=varargin{ind+1};
+                end
+            end
+            %% Run
+            if Time, tic; end
+            
+            %shorten writing for convenience
+            L=obj.BoundingCylinderLength;
+            R=obj.BoundingCylinderRadius;
+
+            %DownSample by GridLengthFcn and introduce parameters
+            GridLength=obj.GridLengthFcn(R,L); %obtain voxel edge length by default function
+            PntCld=pcdownsample(obj.T2ZScan,'gridAverage',GridLength); %Downsample by grid legnth
+            obj.PointCloud=PntCld; %introduce to parameters
+            
+            %Find Xcenter - point seperating between sphereical and
+            %Cylinderical part
+            Xcntr=FindXcenter(PntCld,obj.XcenterCalculationMethod);
+            obj.Xcenter=Xcntr; %introduce to parameters
+            
+            %Find radius of sphereical part
+            r=L-Xcntr(:,3);
+            obj.SphereRadius=r;
+            
+            %Create Compact Control Points nodes
+            minR=min(r,R); maxR=max(r,R);
+            [Ncyl,Nsph,Ncircum]=MeshNodesAmount(obj.SphLayers,obj.CylLayers,obj.Slices,obj.BezierOrder);
+            P=CircleBellCrv(minR,L,Ncyl,Nsph,'RemoveTopEdge',true);
+            xyz=RotateXZcurve(P,Ncircum); %rotate to create double size Nvert x Ncircum x 3
+            xyz(:,:,1)=xyz(:,:,1)+Xcntr(1); xyz(:,:,2)=xyz(:,:,2)+Xcntr(2); %align vertical axis to pass through Xcenter
+            obj.Compact=xyz;
+            
+            %Optimize compact to create CP
+            CompactCP=BezCP(xyz,obj.BezierOrder,'method','CircularWithCap');
+            h=helpdlg(sprintf(['Creating BlownNodes from CompactNodes.\n',...
+                'This might take a few mintues']));
+            obj.CP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display','iter',...
+                'MaxIterations',MaxOptimizationIterions);
+            close(h); %close helpdlg
+            
+            if Time, toc; end
+        end
+    end
     methods (Static)
         function Ax=DrawPointCloud(PntCld,varargin)
             %INPUT:
-                %PointCloud - can be of differnent types:
-                %numeric matrix of size mx3
-                %numeric matrix of size mxnx3 where the third element
-                %corresponds to [x,y,z]
-                %pointCloud class object
+            %PointCloud - can be of differnent types:
+            %numeric matrix of size mx3
+            %numeric matrix of size mxnx3 where the third element
+            %corresponds to [x,y,z]
+            %pointCloud class object
             %varargin:
             %Color - color as [R,G,B] or matlab strings
             %ColorMap - colormap as string ('jet','parula'...)
@@ -326,7 +418,7 @@ CHull=xy(convhull(xy),:);  %[x,y] mat. find convex hull points
 
 [~,R]=fitcircle(CHull,'linear');
 end
-function Xcenter=FindXcenter(PtCld,L,method,varargin)
+function Xcenter=FindXcenter(PtCld,method,varargin)
 %Assumption:
 %--PtCld was already processed by function Transfom2Z:
 %it is aligned with z axis, has base on z=0
@@ -335,7 +427,6 @@ function Xcenter=FindXcenter(PtCld,L,method,varargin)
 
 %Input:
 %PtCldP  - pointCloud object
-%L - BoundingCylinderLength
 %Method - 'GeomtreyAssumption'/'normalSTD'/'normalThreshold'
 %Varargin - depending on method:
 %normalSTD - BoundingCylinderLength
@@ -385,7 +476,8 @@ switch method
         %*|*|*
         
         %sometimes there is noise in the lower parts of the given scan that prodces vertical normals
-        pass=find(PtCld.Location(:,3)>L/4); %all vertices that pass the condition
+        zmax=max(PtCld.Location(:,3));
+        pass=find(PtCld.Location(:,3)>zmax/4); %all vertices that pass the condition
         CleanPtCld=select(PtCld,pass);
         k=8;
         normals=pcnormals(CleanPtCld,k);
@@ -396,7 +488,8 @@ switch method
             error('Failed to compute Xcenter. Need to provide a Threshold in range [0,1] with the chosen method')
         end
         %sometimes there is noise in the lower parts of the given scan that prodces vertical normals
-        pass=find(PtCld.Location(:,3)>L/4); %all vertices that pass the condition
+        zmax=max(PtCld.Location(:,3));
+        pass=find(PtCld.Location(:,3)>zmax/4); %all vertices that pass the condition
         CleanPtCld=select(PtCld,pass);
         k=8; %see explination in normalSTD method.
         normals=pcnormals(CleanPtCld,k);
@@ -433,6 +526,86 @@ Ncyl=CylLayers*BezierOrder+1;
 Nsph=SphLayers*BezierOrder; %1 less point than Ncyl as it is shared with cylinder
 Ncircum=Slices*BezierOrder;
 end
+function P=CircleBellCrv(R,h,Ncyl,Nsph,varargin)
+%Input:
+%R - radius
+%h - height
+%Ncyl - number of points in "cylinderical" part
+%Nsph - number of points in "Spherical" part
+
+%Varargin Inputs:
+%RemoveTopEdge - true/false of spherical part. (default=true)
+%false ensures that the spherical top points are all the
+%same point (the peak point is repeated)
+%RemoveButtomEdge - true/false of spherical part (default=true)
+%false ensures that spherical buttom points and cylinderical
+%points are the same (repeated points)
+%Output:
+%P - [x,y] (size (Nsph+Ncyl)x2 of evaluated points
+
+%---           ^
+%  ^  \        |
+%  |    \      |
+%  R      \    |
+%  |       \   |
+%  v       |   h
+%          |   |
+%          |   |
+% <---R--->|   v
+
+
+%default values:
+RemoveButtomEdge=true; RemoveTopEdge=true;
+%Obtain inputs
+for ind=1:2:length(varargin)
+    comm=lower(varargin{ind});
+    switch comm
+        case 'removebuttomedge'
+            RemoveButtomEdge=varargin{ind+1};
+        case 'removetopedge'
+            RemoveTopEdge=varargin{ind+1};
+    end
+end
+
+%built function. note:
+%((z-(h-R))/R)=sin(theta)--->sqrt(1-((z-(h-R))/R)^2)=cos(theta)
+fcnrz=@(z) R-heaviside(z-(h-R))*R*(1-sqrt(1-((z-(h-R))/R)^2));
+
+%build vectors
+zcyl=linspace(0,h-R,Ncyl);
+zsph=linspace(h-R,h,Nsph+RemoveTopEdge+RemoveButtomEdge);
+zsph=zsph(1+RemoveButtomEdge:end-RemoveTopEdge);
+z=[zcyl,zsph];
+
+%evalulate r as a function of z
+r=arrayfun(fcnrz, z);
+
+%build output
+P=[r(:),z(:)];
+end
+function xyz=RotateXZcurve(xz,n)
+%Input:
+%xz [x,z] of evalualted points on 2D curve (mx2 array)
+%n - multiplyer amount
+
+%Output:
+%xyz  evaluated points on 3D surface (mxn3 array) where depth dimension is
+%       orginized [x,y]z.
+%       created by turnning the xy curve n times around the y axis. each
+%       time by 2*pi/N amount
+
+m=size(xz,1); %amount of evaluated points on curve
+theta=linspace(0,2*pi,n+1);
+theta=theta(2:end); %first and last point were the same
+x=xz(:,1); z=xz(:,2);
+[X,Y,Z]=deal(zeros(m,n)); %initalize
+for i=1:n
+    X(:,i)=x*cos(theta(i));
+    Y(:,i)=x*sin(theta(i));
+    Z(:,i)=z;
+end
+xyz=cat(3,X,Y,Z);
+end
 function CP=RadialOptimization4CP(CP,StaticPntCld,Rbounds,Xcenter,varargin)
 %Blow up CP.Vertices to so the evaluated bezier surfaces register to StaticPntCld using fmincon (optimization)
 %Algorithm works in two steps:
@@ -440,9 +613,9 @@ function CP=RadialOptimization4CP(CP,StaticPntCld,Rbounds,Xcenter,varargin)
 
 %two methods for radial optimization in this code:
 %--cylinderical: radial optimization from the Xcenter axis from points
-                %below Xcenter (zwise)
+%below Xcenter (zwise)
 %--spherical: radial optimization from Xcenter for points above Xcenter
-            %(zwise)
+%(zwise)
 
 %Algorithm Assumption:
 %--CP.Vertices are bounded within StaticPntCld.
@@ -507,9 +680,9 @@ Icyl=~Isph; %boolean array pointing to cylinderical part
 tsph=(V-Xcenter)./vecnorm(V-Xcenter,2,2); %sphereical radial vectors
 tcyl=[V(:,[1,2])-Xcenter(1:2),zeros(m,1)]./vecnorm(V(:,[1,2])-Xcenter(1:2)+eps,2,2); %cylinderical radial vectors
 t=Isph.*tsph+Icyl.*tcyl; %radial vectors of all CP.Vertices depending on their classification
-%note: 
-    %tcyl denominator has +eps in it to avoid nan values as
-    %vecnorm(V(:,[1,2])-Xcenter(1:2),2,2) may result in zero
+%note:
+%tcyl denominator has +eps in it to avoid nan values as
+%vecnorm(V(:,[1,2])-Xcenter(1:2),2,2) may result in zero
 
 %Optimization
 N=size(CP.Patches,1);
@@ -654,66 +827,6 @@ while numRead < numFaces
     numRead = numRead + 1;
 end
 end %for stlread
-%create compact mesh
-function P=CircleBellCrv(R,h,Ncyl,Nsph)
-%Input:
-%R - radius
-%h - height
-%Ncyl - number of points in "cylinderical" part
-%Nsph - number of points in "Spherical" part
-
-%Output:
-%P - [x,y] (size (Nsph+Ncyl)x2 of evaluated points
-
-%---           ^
-%  ^  \        |
-%  |    \      |
-%  R      \    |
-%  |       \   |
-%  v       |   h
-%          |   |
-%          |   |
-% <---R--->|   v
-
-%built function. note:
-%((z-(h-R))/R)=sin(theta)--->sqrt(1-((z-(h-R))/R)^2)=cos(theta)
-fcnrz=@(z) R-heaviside(z-(h-R))*R*(1-sqrt(1-((z-(h-R))/R)^2));
-
-%build vectors
-zcyl=linspace(0,h-R,Ncyl);
-zsph=linspace(h-R,h,Nsph+1);
-zsph=zsph(2:end); %first point was as zcyl last point
-z=[zcyl,zsph];
-
-%evalulate r as a function of z
-r=arrayfun(fcnrz, z);
-
-%build output
-P=[r(:),z(:)];
-end
-function xyz=RotateXZcurve(xz,n)
-%Input:
-%xz [x,z] of evalualted points on 2D curve (mx2 array)
-%n - multiplyer amount
-
-%Output:
-%xyz  evaluated points on 3D surface (mxn3 array) where depth dimension is
-%       orginized [x,y]z.
-%       created by turnning the xy curve n times around the y axis. each
-%       time by 2*pi/N amount
-
-m=size(xz,1); %amount of evaluated points on curve
-theta=linspace(0,2*pi,n+1);
-theta=theta(2:end); %first and last point were the same
-x=xz(:,1); z=xz(:,2);
-[X,Y,Z]=deal(zeros(m,n)); %initalize
-for i=1:n
-    X(:,i)=x*cos(theta(i));
-    Y(:,i)=x*sin(theta(i));
-    Z(:,i)=z;
-end
-xyz=cat(3,X,Y,Z);
-end
 %fit circle to find BoundingCylinder R
 function [z,r,residual]=fitcircle(x,varargin)
 % Obtained from "fitcircle.m" from mathworks file exchange
@@ -1031,7 +1144,7 @@ function [xyz,Psi,Theta]=CalcSphere(R,Npsi,Ntheta,varargin)
 %Trans - translation [x,y,z]
 %Half - true/false. true - plots half dome (pointing up)
 %Edges - true/false. true - divide psi differently in range [0,pi] so it wont have
-                        %the values of 0,pi
+%the values of 0,pi
 
 %OUTPUT:
 %xyz - size Npsi x Ntheta x 3 where the depth dimension is constructed as [x,y,z]
