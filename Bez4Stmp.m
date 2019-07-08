@@ -16,6 +16,7 @@ classdef Bez4Stmp
     end
     properties (SetAccess = public) %can be changed by user
         GridLengthFcn=@(R,L) R*(0.5*R/L); %after downsampling: VerticesAmount*(GridLength^2)/(2*pi*R*L)~1 by construction
+        Cap=false; %true/false (patch on top of sphere or not). if true Slices must be 4.
         SphLayers=1; %default
         CylLayers=1;
         Slices=4;
@@ -121,18 +122,40 @@ classdef Bez4Stmp
             %Create Compact Control Points nodes
             minR=min(r,R); maxR=max(r,R);
             [Ncyl,Nsph,Ncircum]=MeshNodesAmount(obj.SphLayers,obj.CylLayers,obj.Slices,obj.BezierOrder);
-            P=CircleBellCrv(minR,L,Ncyl,Nsph,'RemoveTopEdge',true);
+            P=CircleBellCrv(minR,L,Ncyl,Nsph,'RemoveTopEdge',obj.Cap);
+            P=flipud(P); %we want highest z in first row for BezCP construction
             xyz=RotateXZcurve(P,Ncircum); %rotate to create double size Nvert x Ncircum x 3
             xyz(:,:,1)=xyz(:,:,1)+Xcntr(1); xyz(:,:,2)=xyz(:,:,2)+Xcntr(2); %align vertical axis to pass through Xcenter
             obj.Compact=xyz;
             
             %Optimize compact to create CP
-            CompactCP=BezCP(xyz,obj.BezierOrder,'method','CircularWithCap');
-            h=helpdlg(sprintf(['Creating BlownNodes from CompactNodes.\n',...
-                'This might take a few mintues']));
+            if obj.Cap, CompactCP=BezCP(xyz,obj.BezierOrder,'method','CircularWithCap');
+            else,  CompactCP=BezCP(xyz,obj.BezierOrder,'method','Circular'); end
+                
+            h=helpdlg('Optimization occuring. Please wait. . .');
             obj.CP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display','iter',...
                 'MaxIterations',MaxOptimizationIterions);
             close(h); %close helpdlg
+            
+            %if no cap, reunite peak points whose location may vary across
+            %top patches due to optimization.
+            if ~obj.Cap
+                TopPatchesNum=find(obj.CP.Connectivity(:,3)==0); %find top patches
+                points2mean=zeros((obj.BezierOrder+1)*obj.Slices,3); %initalize
+                p=1; %indx that points on TopPatchesNum
+                for k=1:obj.Slices %loop to collect all peak points from top patches
+                    points2mean((k-1)*(obj.BezierOrder+1)+1:k*(obj.BezierOrder+1),:)...
+                        =obj.CP.Vertices(obj.CP.Patches(1,:,TopPatchesNum(p)),:);
+                    p=p+1;
+                end
+                MP=mean(points2mean); %mean all peak points to one ultimate peak point
+                p=1; %reinitalize
+                for k=1:obj.Slices %plant MP in all top patches
+                    obj.CP.Vertices(obj.CP.Patches(1,:,TopPatchesNum(p)),:)...
+                        =repmat(MP,[obj.BezierOrder+1,1]);
+                    p=p+1;
+                end                  
+            end
             
             if Time, toc; end
         end
@@ -188,18 +211,40 @@ classdef Bez4Stmp
             %Create Compact Control Points nodes
             minR=min(r,R); maxR=max(r,R);
             [Ncyl,Nsph,Ncircum]=MeshNodesAmount(obj.SphLayers,obj.CylLayers,obj.Slices,obj.BezierOrder);
-            P=CircleBellCrv(minR,L,Ncyl,Nsph,'RemoveTopEdge',true);
+            P=CircleBellCrv(minR,L,Ncyl,Nsph,'RemoveTopEdge',obj.Cap);
+            P=flipud(P); %we want highest z in first row for BezCP construction
             xyz=RotateXZcurve(P,Ncircum); %rotate to create double size Nvert x Ncircum x 3
             xyz(:,:,1)=xyz(:,:,1)+Xcntr(1); xyz(:,:,2)=xyz(:,:,2)+Xcntr(2); %align vertical axis to pass through Xcenter
             obj.Compact=xyz;
             
             %Optimize compact to create CP
-            CompactCP=BezCP(xyz,obj.BezierOrder,'method','CircularWithCap');
-            h=helpdlg(sprintf(['Creating BlownNodes from CompactNodes.\n',...
-                'This might take a few mintues']));
+            if obj.Cap, CompactCP=BezCP(xyz,obj.BezierOrder,'method','CircularWithCap');
+            else,  CompactCP=BezCP(xyz,obj.BezierOrder,'method','Circular'); end
+                
+            h=helpdlg('Optimization occuring. Please wait. . .');
             obj.CP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display','iter',...
                 'MaxIterations',MaxOptimizationIterions);
             close(h); %close helpdlg
+            
+            %if no cap, reunite peak points whose location may vary across
+            %top patches due to optimization
+            if ~obj.Cap
+                TopPatchesNum=find(obj.CP.Connectivity(:,3)==0); %find top patches
+                points2mean=zeros((obj.BezierOrder+1)*obj.Slices,3); %initalize
+                p=1; %indx that points on TopPatchesNum
+                for k=1:obj.Slices %loop to collect all peak points from top patches
+                    points2mean((k-1)*(obj.BezierOrder+1)+1:k*(obj.BezierOrder+1),:)...
+                        =obj.CP.Vertices(obj.CP.Patches(1,:,TopPatchesNum(p)),:);
+                    p=p+1;
+                end
+                MP=mean(points2mean); %mean all peak points to one ultimate peak point
+                p=1; %reinitalize
+                for k=1:obj.Slices %plant MP in all top patches
+                    obj.CP.Vertices(obj.CP.Patches(1,:,TopPatchesNum(p)),:)...
+                        =repmat(MP,[obj.BezierOrder+1,1]);
+                    p=p+1;
+                end                  
+            end
             
             if Time, toc; end
         end
