@@ -3,12 +3,12 @@ Stmp=Bez4Stmp('Roie.stl');
 
 %% Update
 Stmp.SphLayers=3;
-Stmp.CylLayers=2;
-Stmp.BezierOrder=3;
+Stmp.CylLayers=3;
+Stmp.BezierOrder=5;
 Stmp=Stmp.UpdateObj;
 
 %% Draw Patches
-Stmp.CP.DrawBezierPatches;
+Stmp.CP.DrawBezierPatches();
 Stmp.CP.DrawBezierPatches('curvature','gaussian','PauseTime',0);
 
 %% Draw point clouds - orginial, compact and surfaces

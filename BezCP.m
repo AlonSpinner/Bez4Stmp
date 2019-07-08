@@ -1,19 +1,19 @@
 classdef BezCP
     properties (SetAccess = private)
         BezierOrder
-            %integer. symmetric for both u and v parameters
+        %integer. symmetric for both u and v parameters
         Patches
-            %integers size BezierOrder+1 x BezierOrder+1 x PatchAmount.
-            %Values are row index of points in CP.v. depth index is patch indexing.
+        %integers size BezierOrder+1 x BezierOrder+1 x PatchAmount.
+        %Values are row index of points in CP.v. depth index is patch indexing.
         Connectivity
-            %Patch connectivity. size([Ptch Amount,4]). The row index of CP.c indicates the patch involved.
-            %Values are patch indexes. a patch can have 4 neighbors and they are ordered [Left, Right, Up,
-            %Down] in the row. if a patch has no connectivity in a certin direction,
-            %the related value will be 0.
+        %Patch connectivity. size([Ptch Amount,4]). The row index of CP.c indicates the patch involved.
+        %Values are patch indexes. a patch can have 4 neighbors and they are ordered [Left, Right, Up,
+        %Down] in the row. if a patch has no connectivity in a certin direction,
+        %the related value will be 0.
     end
     properties
         Vertices
-            %double size mx3 of control points      
+        %double size mx3 of control points
     end
     methods %public methods, accessible from outside the class
         function obj=BezCP(MeshNodes,BezO,varargin) %constructor
@@ -73,11 +73,8 @@ classdef BezCP
                         error(['for the given method, (M-1)/BezO and N/BezO must both be integers',...
                             'where MeshNodes is of size N x M x 3']);
                     end
-                    if 4*BezO~=BezO*Slices
-                       error('for the given method, 4*BezO must equal N')
-                       %amount of nodes on circumference of patch grid BezO+1 x BezO+1:
-                       %2*(BezO+1)+2*(BezO+1-2)=4*BezO
-                       %amount of nodes on circumference of shape: N
+                    if 4~=Slices
+                        error('for the given method, Slices must equal 4')
                     end
                     PtchAmnt=Slices*Layers+1; %+1 for cap
                     
@@ -121,7 +118,7 @@ classdef BezCP
                             P(i,j,k)=(i-1)*(j-1)+NodeAmnt;
                         end
                     end
-                                      
+                    
                     %Build C - connectivity
                     %cap patch has no row in C, but is indexed there
                     Ip=reshape(1:PtchAmnt-1,[Layers,Slices]); %indexing point in PtchCP. not including cap
@@ -135,7 +132,7 @@ classdef BezCP
                         if j==Slices, R=Ip(i,1); else, R=Ip(i,j+1); end %remember circularity
                         C(k,:)=[L,R,U,D];
                     end
-                
+                    
                 case 'circular'
                     Layers=(M-1)/BezO; %amount of patches in a single layer
                     Slices=N/BezO; %amount of layers of patches
@@ -304,12 +301,12 @@ classdef BezCP
             %Output:
             %xyz size PtchAmnt*N x N x 3 of all patches combined where the
             %third dimension is ordered [x,y,z]
-                        
+            
             PtchAmnt=size(obj.Patches,3);
             sz=size(obj.Patches);
             [x,y,z]=deal(zeros(PtchAmnt*N,N));
             for k=1:PtchAmnt
-                Pcp=obj.Vertices(obj.Patches(:,:,k),:); %Obtain patch control points. 
+                Pcp=obj.Vertices(obj.Patches(:,:,k),:); %Obtain patch control points.
                 Pcp=reshape(Pcp,[sz(1:2),3]); %format to match requirements of BezPtchCP2SrfP
                 Psrfp=BezPtchCP2SrfP(Pcp,N);
                 x((k-1)*N+1:k*N,:,:)=Psrfp(:,:,1);
@@ -317,6 +314,73 @@ classdef BezCP
                 z((k-1)*N+1:k*N,:,:)=Psrfp(:,:,3);
             end
             xyz=cat(3,x,y,z);
+        end
+        
+        function igsWrite(obj,FileName)
+            %Input:
+            %FileName - char. can contain path. may not include extension.
+            
+            %Output:
+            %creates iges file format by the following steps:
+                %1) creates itd text format and writes control point data
+                    %into it
+                %2) call on irit2igs.exe to create igs file from itd
+                %3) delete itd file
+                
+            %NOTE:
+            %can only run if file 'irit2igs.exe' is in folder/matlab path
+                
+            
+            %example of itd text format:
+            %[SURFACE BEZIER 3 3 E3
+            % 	[-42.6193	-3.02585	1.23967	] %control points for u=const1
+            % 	[-42.2107	-3.74057	5.48943	]
+            % 	[-41.9059	-3.41341	9.40101	]
+            %
+            % 	[-42.1267	-10.0367	1.25626	] %control points for u=const2
+            % 	[-41.6183	-9.73169	5.64561	]
+            % 	[-41.1738	-10.0765	9.31034	]
+            %
+            % 	[-40.3078	-16.7856	1.19208	] %control points for u=const3
+            % 	[-39.9241	-16.3549	5.55235	]
+            % 	[-39.1993	-16.8461	9.42853	]
+            %]
+            
+            %create FileNames for igs and itd
+            %enforce '.itd' extention to FileName if other was provided
+            [~,~,ext]=fileparts(FileName);
+            FileName_itd=[FileName(1:end-length(ext)) '.itd'];
+            FileName_igs=[FileName(1:end-length(ext)) '.igs'];
+            
+            %open itd file to write to
+            fileID = fopen(FileName_itd,'w');
+            if fileID<0 %=-1
+                error('FileName is invalid');
+            end
+            
+            %initialize. m=n but seprated for clarity
+            PatchAmnt=size(obj.Patches,3);
+            m=size(obj.Patches,1);
+            n=size(obj.Patches,2);
+            
+            for k1=1:PatchAmnt %amount of patches
+                P=obj.Vertices(obj.Patches(:,:,k1),:); %collect patch points in m*nx3 matrix
+                fprintf(fileID,'[SURFACE BEZIER %d %d E3\n',m,n); %open line for patch k1
+                for k2=1:m:(m*n-m+1) %every m rows represent a "block" (constant u)
+                    for k3=0:(n-1) %print block
+                        fprintf(fileID,['\t[',sprintf('%g\t',P(k2+k3,:)),']\n']);
+                    end
+                    if k2~=(m*n-m+1), fprintf(fileID,'\n'); end %go down a line between blocks
+                end
+                fprintf(fileID,']\n\n'); %close line for patch k1
+            end
+            fclose(fileID); %close connection between file and matlab
+            
+            %use irit to convert itd file to igs
+            eval(sprintf('!irit2igs -o %s %s',FileName_igs,FileName_itd));
+            
+            %delete itd file
+            delete(FileName_itd);
         end
     end
     methods (Static)
