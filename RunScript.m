@@ -1,3 +1,17 @@
+%% Peaks
+PtchAmnt=100;
+Layers=sqrt(PtchAmnt);
+BezO=3; 
+N=Layers*BezO+1;
+[X,Y,Z]=peaks(N);
+MeshNodes(:,:,1)=X; MeshNodes(:,:,2)=Y; MeshNodes(:,:,3)=Z;
+PeaksCP=BezCP(MeshNodes,BezO,'Method','Block');
+PseudoPeaksCP=PeaksCP.PesudoInverseTheVertices;
+
+Ax=BezCP.DrawPointCloud(MeshNodes,'color',[1,0,0],'msize',20);
+PseudoPeaksCP.DrawBezierPatches('color',[1,1,1],'Ax',Ax);
+BezCP.DrawPointCloud(PseudoPeaksCP.Vertices,'color',[0,1,0],'msize',20,'Ax',Ax);
+
 %% Calculate 
 Stmp=Bez4Stmp('Roie.stl');
 

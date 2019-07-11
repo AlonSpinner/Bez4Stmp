@@ -23,14 +23,18 @@ classdef BezCP
             %BezO=3 <-> 4 control points in each parameter
             
             %Varargin Input:
-            %Method - 'Circular'/'CircularWithCap'/'Block'. Block
-            %Circular - stich patches to close a cylinderical surface.
+            
+            %Method - 'Circular'/'CircularWithCap'/'Block'.
+            %----'Circular'
+            %stich patches to close a cylinderical surface.
             %stiching occures across columns of MeshNodes:
             %first patch and last patch both consist of
             %MeshNodes(:,1)
             %M=Nvert=(BezierOrder+1)+(Layers-2)*BezierOrder+(BezierOrder-1)=Layers*BezierOrder+1
             %N=Ncircum=(BezierOrder+1)+(Slices-1)*BezierOrder=Slices*BezierOrder
-            %Block
+            %---'CircularWithCap'
+            %only implemented to top side.
+            %---'Block'
             %M=Nvert=Layers*BezierOrder+1
             %N=Nhorz=Slices*BezierOrder+1
             
@@ -46,7 +50,7 @@ classdef BezCP
             
             if isa(MeshNodes,'pointCloud'); MeshNodes=MeshNodes.Location; end
             
-            Method='block'; %default
+            Method='block';
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
                 switch comm
@@ -183,7 +187,7 @@ classdef BezCP
                     %Build P - patches
                     P=zeros(BezO+1,BezO+1,PtchAmnt);
                     k=1;
-                    for n=1:BezO:(N-2*BezO+1) %go "block" by "block" and collect it into P
+                    for n=1:BezO:(N-BezO) %go "block" by "block" and collect it into P
                         for m=1:BezO:(M-BezO)
                             P(:,:,k)=Iv(m:m+BezO,n:n+BezO);
                             k=k+1;
@@ -315,21 +319,53 @@ classdef BezCP
             end
             xyz=cat(3,x,y,z);
         end
-        
+        function obj=UnifyEdge2Peak(obj,Edge)
+            %finds all vertices are top/bottom edge and reposition them to
+            %their mean value to create a peak point
+            
+            %Input:
+            %Edge - 'top'/'bot
+            
+            switch lower(Edge)
+                case 'top'
+                    PatchesNum=find(obj.Connectivity(:,3)==0); %find top patches
+                    row=1;
+                case 'bot'
+                    PatchesNum=find(obj.Connectivity(:,4)==0); %find bot patches
+                    row=obj.BezierOrder+1;
+                otherwise
+                    error('Edge variable must be "top"/"bot"');
+            end
+            n=length(PatchesNum);
+            points2mean=zeros((obj.BezierOrder+1)*n,3); %initalize
+            p=1; %indx that points on TopPatchesNum
+            for k=1:n %loop to collect all edge points from top patches
+                points2mean((k-1)*(obj.BezierOrder+1)+1:k*(obj.BezierOrder+1),:)...
+                    =obj.Vertices(obj.Patches(row,:,PatchesNum(p)),:);
+                p=p+1;
+            end
+            MP=mean(points2mean); %mean all edge points to one ultimate peak point
+            p=1; %reinitalize
+            for k=1:n %plant MP in all top patches
+                obj.Vertices(obj.Patches(row,:,PatchesNum(p)),:)...
+                    =repmat(MP,[obj.BezierOrder+1,1]);
+                p=p+1;
+            end
+        end
         function igsWrite(obj,FileName)
             %Input:
             %FileName - char. can contain path. may not include extension.
             
             %Output:
             %creates iges file format by the following steps:
-                %1) creates itd text format and writes control point data
-                    %into it
-                %2) call on irit2igs.exe to create igs file from itd
-                %3) delete itd file
-                
+            %1) creates itd text format and writes control point data
+            %into it
+            %2) call on irit2igs.exe to create igs file from itd
+            %3) delete itd file
+            
             %NOTE:
             %can only run if file 'irit2igs.exe' is in folder/matlab path
-                
+            
             
             %example of itd text format:
             %[SURFACE BEZIER 3 3 E3
@@ -381,6 +417,27 @@ classdef BezCP
             
             %delete itd file
             delete(FileName_itd);
+        end
+        function obj=PesudoInverseTheVertices(obj)
+            %Assuming the current obj.Vertices makes a surface for which we
+            %would want to fit a bezier surface mesh, update Obj.Vertices
+            %so they are the control points of said bezier surface mesh.
+            %we do this using PseduInverse for each patch individually, and
+            %using the mean values for vertices shared between patches.
+            
+            %Initalize
+            P=obj.Patches;
+            sz=size(P);
+            u=linspace(0,1,sz(1)); %amount of surface points as nodes in current patch
+            v=linspace(0,1,sz(2)); %amount of surface points as nodes in current patch
+            B=BezMatrix(obj.BezierOrder);
+            
+            for k=1:sz(3) %amount of patches
+                VInd=reshape(obj.Patches(:,:,k),[],1); %reshape to column vec
+                Ps=reshape(obj.Vertices(VInd,:),sz(1),sz(2),3); %reshape to mxnx3
+                P=PseduoInverse(B,u,v,Ps); %obtain mxnx3 new control points matrix
+                obj.Vertices(VInd,:)=reshape(P,[],3); %insert into Vertices
+            end
         end
     end
     methods (Static)
@@ -668,4 +725,89 @@ H = reshape(H,s,t);
 % Principal Curvatures
 Pmax = H + sqrt(H.^2 - K);
 Pmin = H - sqrt(H.^2 - K);
+end
+%Some more Bezier functions.
+function P=PseduoInverse(B,u,v,Ps)
+%method discovered in "BEZIER SURFACE GENERATION OF THE PATELLA"
+%by Dale A. Patrick
+%https://corescholar.libraries.wright.edu/cgi/viewcontent.cgi?referer=https://www.google.com/&httpsredir=1&article=1325&context=etd_all
+%cited 6 times! WTF?
+
+%Input:
+%B - bezier matrix size (BezOu+1) x (BezOv+1)
+%Ps - points evaluated on surface
+%u and v- arrays of values ranging [0,1] for which to relate the
+%surface points given
+
+%example:
+%Ps(i,j)=Ps(u(i),v(j))
+
+%Output:
+%P - control points matrix
+
+%Therom:
+%Ps=UBPB'V'
+%U'PsV=U'UBPB'V'V;
+%[inv(U'U)U']Ps[V*inv(V'V)]'=[inv(U'U)U'U]BPB'[(V'V)*inv(V'V)]
+%Us=[inv(U'U)U']; Vs=[V*inv(V'V)]';
+%P=[inv(B)*Us]Ps[Vs'*inv(B'];
+
+%note:
+%U=[u1^3,u1^2,u1,1;
+%[u2^3,u2^2,u2,1;
+%...]
+%V=[v1^3,v1^2,v1,1;
+%[v2^3,v2^2,v2,1
+%...]
+
+%obtain bezier order (plus one) per parameter
+sz=size(B);
+v_BezOp1=sz(1); u_BezOp1=sz(2); %p1 for plus one.
+
+%Create U and V (same size and symmetric order)
+U=(zeros(length(u),u_BezOp1));
+for i=1:length(u)
+    for j=1:u_BezOp1
+        U(i,j)=u(i)^(j-1);
+    end
+end
+V=(zeros(length(v),v_BezOp1));
+for i=1:length(v)
+    for j=1:v_BezOp1
+        V(i,j)=v(i)^(j-1);
+    end
+end
+
+P=zeros(size(Ps)); %initalize
+for dim=1:size(Ps,3) %R3 dimensions (x,y,z)
+    P(:,:,dim)=inv(B)*pinv(U)*Ps(:,:,dim)*pinv(V)'*inv(B'); %pinv stated in nested function
+end
+    function A=pinv(A)
+        A=inv(A'*A)*A';
+    end
+end
+function B=BezMatrix(BezO)
+%Input:
+%BezO - bezier order of the u and v polynomials (symmetric)
+
+%Output:
+%B - bezier matrix
+%where:
+%Ps(u,v)=UBPB'V'
+%Ps - evaluated surface point
+%P - control point matrix
+%U,V - parameter polynomial vectors [u^k,u^(k-1),...,1]
+
+%note: bernsteinMatrix is in fact the following:
+%n=BezO;
+%for k=0:n
+%    b(k+1)= nchoosek(n,k)*t^k*(1-t)^(n-k);
+%end
+
+syms t
+B=zeros(BezO+1,BezO+1);
+b=fliplr(bernsteinMatrix(BezO,t));
+for j=1:length(b)
+    B(j,:)=coeffs(b(j),t,'all');
+end
 end

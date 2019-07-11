@@ -137,24 +137,10 @@ classdef Bez4Stmp
                 'MaxIterations',MaxOptimizationIterions);
             close(h); %close helpdlg
             
-            %if no cap, reunite peak points whose location may vary across
-            %top patches due to optimization.
-            if ~obj.Cap
-                TopPatchesNum=find(obj.CP.Connectivity(:,3)==0); %find top patches
-                points2mean=zeros((obj.BezierOrder+1)*obj.Slices,3); %initalize
-                p=1; %indx that points on TopPatchesNum
-                for k=1:obj.Slices %loop to collect all peak points from top patches
-                    points2mean((k-1)*(obj.BezierOrder+1)+1:k*(obj.BezierOrder+1),:)...
-                        =obj.CP.Vertices(obj.CP.Patches(1,:,TopPatchesNum(p)),:);
-                    p=p+1;
-                end
-                MP=mean(points2mean); %mean all peak points to one ultimate peak point
-                p=1; %reinitalize
-                for k=1:obj.Slices %plant MP in all top patches
-                    obj.CP.Vertices(obj.CP.Patches(1,:,TopPatchesNum(p)),:)...
-                        =repmat(MP,[obj.BezierOrder+1,1]);
-                    p=p+1;
-                end                  
+            %if no cap, top edges whose location may vary across
+            %top patches due to optimization to produce a peak point
+            if ~obj.Cap                  
+                obj.CP=obj.CP.UnifyEdge2Peak('top');
             end
             
             if Time, toc; end
@@ -226,24 +212,10 @@ classdef Bez4Stmp
                 'MaxIterations',MaxOptimizationIterions);
             close(h); %close helpdlg
             
-            %if no cap, reunite peak points whose location may vary across
-            %top patches due to optimization
-            if ~obj.Cap
-                TopPatchesNum=find(obj.CP.Connectivity(:,3)==0); %find top patches
-                points2mean=zeros((obj.BezierOrder+1)*obj.Slices,3); %initalize
-                p=1; %indx that points on TopPatchesNum
-                for k=1:obj.Slices %loop to collect all peak points from top patches
-                    points2mean((k-1)*(obj.BezierOrder+1)+1:k*(obj.BezierOrder+1),:)...
-                        =obj.CP.Vertices(obj.CP.Patches(1,:,TopPatchesNum(p)),:);
-                    p=p+1;
-                end
-                MP=mean(points2mean); %mean all peak points to one ultimate peak point
-                p=1; %reinitalize
-                for k=1:obj.Slices %plant MP in all top patches
-                    obj.CP.Vertices(obj.CP.Patches(1,:,TopPatchesNum(p)),:)...
-                        =repmat(MP,[obj.BezierOrder+1,1]);
-                    p=p+1;
-                end                  
+            %if no cap, top edges whose location may vary across
+            %top patches due to optimization to produce a peak point
+            if ~obj.Cap                  
+                obj.CP.UnifyEdge2Peak('top')
             end
             
             if Time, toc; end
@@ -651,9 +623,7 @@ end
 xyz=cat(3,X,Y,Z);
 end
 function CP=RadialOptimization4CP(CP,StaticPntCld,Rbounds,Xcenter,varargin)
-%Blow up CP.Vertices to so the evaluated bezier surfaces register to StaticPntCld using fmincon (optimization)
-%Algorithm works in two steps:
-%--a fine optimization that fits different radii to different vertices
+%Blow up CP.Vertices to StaticPntCld using fmincon (optimization)
 
 %two methods for radial optimization in this code:
 %--cylinderical: radial optimization from the Xcenter axis from points
@@ -677,9 +647,9 @@ function CP=RadialOptimization4CP(CP,StaticPntCld,Rbounds,Xcenter,varargin)
 %CP.v - see notes below
 %OR pointCloud object with similar.Location value
 %RBounds - [Minimal radius,Maximal radius] to add to a point in MovPntCld
-%Xcenter - [x,y,z] mx3 point in 3D space. if spherical mehthod was chosen it
-%is the point from which radial expansion happens about. if cylinderical
-%method was chosen, Xcenter(1,2) is the [x,y] coordante where the centeral axis passes
+%Xcenter - [x,y,z] mx3 point in 3D space. for spherical mehthod it
+%is the point from which radial expansion happens about. for cylinderical
+%method Xcenter(1,2) is the [x,y] coordante where the centeral axis passes
 %through and expansion happens about
 
 %Varargin inputs:
@@ -729,8 +699,7 @@ t=Isph.*tsph+Icyl.*tcyl; %radial vectors of all CP.Vertices depending on their c
 %vecnorm(V(:,[1,2])-Xcenter(1:2),2,2) may result in zero
 
 %Optimization
-N=size(CP.Patches,1);
-fun=@(r) CostFcn(CP,StaticPntCld,t,r,2*N);
+fun=@(r) CostFcn(CP,StaticPntCld,t,r);
 options = optimoptions('fmincon','Algorithm','interior-point','Display',Display,...
     'DiffMaxChange',DiffMaxChange,'DiffMinChange',DiffMinChange,...
     'MaxIterations',MaxIterations,'MaxFunctionEvaluations',MaxIterations*m);
@@ -741,13 +710,12 @@ rOpt=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
 
 %Create output
 CP.Vertices=V+t.*rOpt;
-    function Cost=CostFcn(CP,StaticPntCld,t,r,N)
+    function Cost=CostFcn(CP,StaticPntCld,t,r)
         %Input:
         %CP - BezCP class
         %StaticPntCld  - pointCloud class
         %t - vectors size mx3 of radial direction.
         %r - vector mx1 of radius values (optimization parameter)
-        %N - number of points to be evaulated on each bezier patch is N^2
         
         %Output:
         %Cost=least squares cost essentially (CP.Vertices+t.*r - StaticPntCld)^2
@@ -757,11 +725,8 @@ CP.Vertices=V+t.*rOpt;
         %used instead of 'm'
         Cost=0;
         CP.Vertices=CP.Vertices+t.*r;
-        xyz=CP.CombinePatches(N);
-        x=xyz(:,:,1); y=xyz(:,:,2); z=xyz(:,:,3);
-        for i=1:numel(x)
-            pnti=[x(i),y(i),z(i)];
-            [~,d]=findNearestNeighbors(StaticPntCld,pnti,1);
+        for i=1:size(CP.Vertices,1)
+            [~,d]=findNearestNeighbors(StaticPntCld,CP.Vertices(i,:),1);
             Cost=Cost+d^2;
         end
     end
