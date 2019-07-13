@@ -1,3 +1,86 @@
+%Written by Alon Spinner @ 6-7/19
+
+%Class creates a bezier surface mesh of three kinds (methods):
+%block - mxn patch grid
+%circular - MxN patch grid stiched togther at the sides
+%circular with cap - as circular, but with a capping patch at the top side
+
+%Note1:
+%Patches are stiched in the vertical and horizontal direction, and there is an overlap of one
+%"line" inbetween patches to accomidate g0 geometeric continuity.
+% 1st patch,  2nd-(end-1), patch %(end) patch - connects with 1st patch
+%   |           |                 |
+%   V           V                 V
+%
+%M=Nvert - amount of nodes in a vertical line
+%N=Nhorz - amount of nodes in a horizontal line
+
+%Note2:
+%MeshNodes coorelate to patches as such:
+%---------------------------------------------->N Columns
+%                 TOP SIDE
+%|------------|-------------|------------
+%|   Patch 1  |Patch Layer+1|Patch 2*Layer+1
+%|------------|-------------|------------
+%|   Patch 2  |Patch Layer+2|Patch 2*Layer+2
+%|------------|-------------|------------
+%|      ...   |    ...      |     ...
+%|------------|-------------|------------
+%|Patch Layers|Patch Layer+2|Patch 2*Layer+2
+%|------------|-------------|------------
+%                 BOT SIDE
+%
+%
+%M rows
+
+%Note3:
+%formulation for required meshnode size depending on the method
+%----'Circular' or 'CircularWithCap'
+%M=Nvert=(BezierOrder+1)+(Layers-2)*BezierOrder+(BezierOrder-1)=Layers*BezierOrder+1
+%N=Ncircum=(BezierOrder+1)+(Slices-1)*BezierOrder=Slices*BezierOrder
+%---'Block'
+%M=Nvert=Layers*BezierOrder+1
+%N=Nhorz=Slices*BezierOrder+1
+
+% %-----------------EXAMPLE: (script)--------------
+% PtchAmnt=16;
+% Layers=sqrt(PtchAmnt);
+% BezO=3;
+% N=Layers*BezO+1;
+% [X,Y,Z]=peaks(N);
+% MeshNodes=zeros(size(X));
+% MeshNodes(:,:,1)=X; MeshNodes(:,:,2)=Y; MeshNodes(:,:,3)=Z;
+% PeaksCP=BezCP(MeshNodes,BezO,'Method','Block');
+% PseudoPeaksCP=PeaksCP.PesudoInverseVertices;
+%
+% %compare PeaksCP to original surface
+% %PeaksCP - mesh nodes of peaks surface are the control points for the bezier surface mesh
+% Ax11=PeaksCP.DrawBezierPatches('color',[1,0,0],'facealpha',1,'title','PeaksCP Bezier mesh vs Peaks Surface');
+% BezCP.DrawPointCloud(PeaksCP.Vertices,'color',[0,1,0],'msize',20,'Ax',Ax11); %draw control points
+% surf(Ax11,X,Y,Z,'EdgeColor','none','FaceAlpha',0.5)
+%
+% %compare PseudoPeaksCP to original peaks surface
+% %PseudoPeaksCP - bezier surface mesh attempts to equal peaks surface
+% Ax12=PseudoPeaksCP.DrawBezierPatches('color',[1,1,1],'title','PsuedoPeaksCP Bezier mesh vs Peaks Surface');
+% BezCP.DrawPointCloud(PseudoPeaksCP.Vertices,'color',[0,1,0],'msize',20,'Ax',Ax12); %draw control points
+% surf(Ax12,X,Y,Z,'EdgeColor','none','FaceAlpha',1)
+%
+% Ax13=PseudoPeaksCP.DrawBezierPatches('color',[1,1,1],'title','PsuedoPeaksCP Bezier mesh vs PeaksCP Bezier mesh');
+% PeaksCP.DrawBezierPatches('color',[1,0,0],'facealpha',1,'Ax',Ax13);
+%
+% %obtain figure handles of recently created axes
+% h11=Ax11.Parent; h12=Ax12.Parent; h13=Ax13.Parent;
+%
+% %move axes into subplot array
+% fig=figure('color',[0,0,0],'units','normalized','outerposition',[0 0 1 1]);
+% subplot(1,3,1,Ax11,'parent',fig);
+% subplot(1,3,2,Ax12,'parent',fig);
+% subplot(1,3,3,Ax13,'parent',fig);
+%
+% %delete old figures
+% close(h11,h12,h13);
+% clear('Ax11','Ax12','Ax13');
+% %------------end of example-------------
 classdef BezCP
     properties (SetAccess = private)
         BezierOrder
@@ -10,6 +93,20 @@ classdef BezCP
         %Values are patch indexes. a patch can have 4 neighbors and they are ordered [Left, Right, Up,
         %Down] in the row. if a patch has no connectivity in a certin direction,
         %the related value will be 0.
+        Method='block'; %default
+        %Method - 'Circular'/'CircularWithCap'/'Block'.
+        %----'Circular'
+        %stich patches to close a cylinderical surface.
+        %stiching occures across columns of MeshNodes:
+        %first patch and last patch both consist of
+        %MeshNodes(:,1)
+        %M=Nvert=(BezierOrder+1)+(Layers-2)*BezierOrder+(BezierOrder-1)=Layers*BezierOrder+1
+        %N=Ncircum=(BezierOrder+1)+(Slices-1)*BezierOrder=Slices*BezierOrder
+        %---'CircularWithCap'
+        %only implemented to top side.
+        %---'Block'
+        %M=Nvert=Layers*BezierOrder+1
+        %N=Nhorz=Slices*BezierOrder+1   
     end
     properties
         Vertices
@@ -23,40 +120,19 @@ classdef BezCP
             %BezO=3 <-> 4 control points in each parameter
             
             %Varargin Input:
-            
-            %Method - 'Circular'/'CircularWithCap'/'Block'.
-            %----'Circular'
-            %stich patches to close a cylinderical surface.
-            %stiching occures across columns of MeshNodes:
-            %first patch and last patch both consist of
-            %MeshNodes(:,1)
-            %M=Nvert=(BezierOrder+1)+(Layers-2)*BezierOrder+(BezierOrder-1)=Layers*BezierOrder+1
-            %N=Ncircum=(BezierOrder+1)+(Slices-1)*BezierOrder=Slices*BezierOrder
-            %---'CircularWithCap'
-            %only implemented to top side.
-            %---'Block'
-            %M=Nvert=Layers*BezierOrder+1
-            %N=Nhorz=Slices*BezierOrder+1
-            
-            %Note:
-            %Patches are stiched in the vertical and horizontal direction, and there is an overlap of one
-            %"line" inbetween patches to accomidate g0 geometeric continuity.
-            % 1st patch,  2nd-(end-1), patch %(end) patch - connects with 1st patch
-            %   |           |                 |
-            %   V           V                 V
-            %
-            %M=Nvert - amount of nodes in a vertical line
-            %N=Nhorz - amount of nodes in a horizontal line
+            %Method - 'Circular'/'CircularWithCap'/'Block' - see properties
             
             if isa(MeshNodes,'pointCloud'); MeshNodes=MeshNodes.Location; end
             
-            Method='block';
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
                 switch comm
                     case 'method'
                         Method=varargin{ind+1};
                 end
+            end
+            if exist('Method','var') && isa(Method,'char') %set method if provided
+                obj.Method=Method;
             end
             
             sz=size(MeshNodes);
@@ -68,8 +144,8 @@ classdef BezCP
             Iv=reshape(1:NodeAmnt,[M,N]); %indexing matrix to vertices in ControlPoints
             V=reshape(MeshNodes,[],3); %vertices [x,y,z] (mx3) format
             
-            switch lower(Method)
-                case 'circularwithcap'
+            switch lower(obj.Method)
+                case 'circularwithcap' %ONLY IMPLEMENTED FOR TOP SIDE
                     Layers=(M-1)/BezO; %amount of patches in a single layer
                     Slices=N/BezO; %amount of layers of patches
                     %check validity
@@ -83,7 +159,7 @@ classdef BezCP
                     PtchAmnt=Slices*Layers+1; %+1 for cap
                     
                     %add cap vertices to V
-                    CapCircum=Iv(end,:); %indcies of cap circumference nodes in V
+                    CapCircum=Iv(1,:); %indcies of cap circumference nodes in V
                     Vcap=zeros((BezO-1)^2,3); %initalize vertices of cap
                     for j=2:BezO %linear interpolation
                         for i=2:BezO
@@ -213,7 +289,7 @@ classdef BezCP
             obj.Patches=P;
             obj.Connectivity=C;
         end
-        function Handles=DrawBezierPatches(obj,varargin)
+        function varargout=DrawBezierPatches(obj,varargin)
             %draws bezier parameteric surfaces from data stored in obj.CP
             
             %Varagin inputs:
@@ -223,14 +299,17 @@ classdef BezCP
             %Color - color of all patches. if not specified - will be by lines (matlab colormap).
             %PauseTime - pause time between patch drawings (seconds).
             %default set to "none"
+            %Title - title of axes str
+            %FaceAlpha - facealpha of drawn surfaces.
             
             %note: Providing both Color and Curvature returns an error.
             
-            %Outputs:
-            %Handles - array of handles size(1,Patch Amount)
+            %Outputs by varargout:
+            %varargout{1} = Ax - returns the axes handle the surfaces were drew on
+            %varargout{2} = Handles - array of handles size(1,Patch Amount)
             
             %default values
-            N=30; Curvature='none'; PauseTime=0;
+            N=30; Curvature='none'; PauseTime=0; FaceAlpha=0.6;
             %Obtain inputs
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
@@ -245,6 +324,10 @@ classdef BezCP
                         Curvature=varargin{ind+1};
                     case 'pausetime'
                         PauseTime=varargin{ind+1};
+                    case 'title'
+                        Title=varargin{ind+1};
+                    case 'facealpha'
+                        FaceAlpha=varargin{ind+1};
                 end
             end
             
@@ -270,6 +353,9 @@ classdef BezCP
                 xlabel(Ax,'x'); ylabel(Ax,'y'); zlabel(Ax,'z');
                 axis(Ax,'equal'); grid(Ax,'on'); hold(Ax,'on'); view(Ax,3);
             end
+            if exist('Title','var') && isa(Title,'char') %set title if provided
+                title(Ax,['\color{white}',Title]);
+            end
             
             %initalization for drawing patches
             Handles=gobjects(1,PtchAmnt); %initalize handle array
@@ -285,7 +371,7 @@ classdef BezCP
                 switch Curvature
                     case 'none'
                         Handles(k)=surf(Ax,x,y,z,...
-                            'facecolor',PtchColor(k,:),'edgecolor','none','facealpha',0.6,...
+                            'facecolor',PtchColor(k,:),'edgecolor','none','facealpha',FaceAlpha,...
                             'UserData',k);
                     case 'gaussian'
                         K=SurfCurvature(x,y,z);
@@ -298,6 +384,10 @@ classdef BezCP
                 end
                 pause(PauseTime);
             end
+            
+            %Create output
+            if nargout==0, varargout={};
+            else, varargout={Ax,Handles}; end
         end
         function xyz=CombinePatches(obj,N)
             %N - number of points evaluated for each patch is N^2
@@ -418,7 +508,7 @@ classdef BezCP
             %delete itd file
             delete(FileName_itd);
         end
-        function obj=PesudoInverseTheVertices(obj)
+        function obj=PesudoInverseVertices(obj)
             %Assuming the current obj.Vertices makes a surface for which we
             %would want to fit a bezier surface mesh, update Obj.Vertices
             %so they are the control points of said bezier surface mesh.
@@ -426,22 +516,34 @@ classdef BezCP
             %using the mean values for vertices shared between patches.
             
             %Initalize
-            P=obj.Patches;
-            sz=size(P);
+            sz=size(obj.Patches);
             u=linspace(0,1,sz(1)); %amount of surface points as nodes in current patch
             v=linspace(0,1,sz(2)); %amount of surface points as nodes in current patch
-            B=BezMatrix(obj.BezierOrder);
+            B=fn_BezMatrix(obj.BezierOrder);
+            Ip=zeros(sz(1),sz(2),3,sz(3));
             
+            %find control points for each surface
             for k=1:sz(3) %amount of patches
-                VInd=reshape(obj.Patches(:,:,k),[],1); %reshape to column vec
+                VInd=reshape(obj.Patches(:,:,k),[],1); %reshape all vertices index of patch to column vec
                 Ps=reshape(obj.Vertices(VInd,:),sz(1),sz(2),3); %reshape to mxnx3
-                P=PseduoInverse(B,u,v,Ps); %obtain mxnx3 new control points matrix
-                obj.Vertices(VInd,:)=reshape(P,[],3); %insert into Vertices
+                Ip(:,:,:,k)=fn_PseduoInverse(B,u,v,Ps); %obtain mxnx3 new control points matrix
             end
+            
+            %updated obj.Vetices to the control points
+            %applys mean on shared control points between surfaces
+            for k=1:size(obj.Vertices,1)
+                [row,col,depth]=ind2sub(sz,find(obj.Patches==k)); %find location of vertex index k in obj.Patches
+                kPoints=zeros(length(row),3);
+                for j=1:length(row)
+                    kPoints(j,:)=reshape(Ip(row(j),col(j),:,depth(j)),[],3);
+                end
+                obj.Vertices(k,:)=mean(kPoints,1);
+            end
+            
         end
     end
     methods (Static)
-        function Ax=DrawPointCloud(PntCld,varargin)
+        function varargout=DrawPointCloud(PntCld,varargin)
             %INPUT:
             %PointCloud - can be of differnent types:
             %numeric matrix of size mx3
@@ -456,9 +558,9 @@ classdef BezCP
             %title - title of axes
             
             %OUTPUT:
-            %CldPHandle - a handle to the axes object
+            %Outputs by varargout:
+            %varargout{1} = Ax - returns the axes handle the surfaces were drew on
             
-            %check input. if is double, create a pointCloud object
             switch class(PntCld)
                 case 'double'
                     sz=size(PntCld);
@@ -517,12 +619,15 @@ classdef BezCP
                 colormap(Ax,ColorMap);
             else
                 if numel(Color)==3
-                    %         Color=Color.*ones(size(PntCld));
                     pcshow(PntCld,Color,'MarkerSize',Msize,'Parent',Ax);
                 else
-                    error('Color must be a 3x1 or 1x3 RGB vector');
+                    error('Color must be a 1x3 RGB vector');
                 end
             end
+            
+            %Create output
+            if nargout==0, varargout={};
+            else, varargout={Ax}; end
         end
         function [hd,pInd,qInd]=Hausdorff(P,Q,varargin)
             % Calculates the Hausdorff Distance, hd, between two sets of points, P and
@@ -580,6 +685,40 @@ classdef BezCP
             qInd=qInd(Ind);
             hd=sqrt(hd2);
         end
+        function B=BezMatrix(BezO)
+            %Input:
+            %BezO - bezier order of the u and v polynomials (symmetric)
+            
+            %Output:
+            %B - bezier matrix
+            %where:
+            %Ps(u,v)=UBPB'V'
+            %Ps - evaluated surface point
+            %P - control point matrix
+            %U,V - parameter polynomial vectors [u^k,u^(k-1),...,1]
+            
+            B=fn_BezMatrix(BezO);
+        end %only calls the function
+        function P=PseduoInverse(B,u,v,Ps)
+            %method discovered in "BEZIER SURFACE GENERATION OF THE PATELLA"
+            %by Dale A. Patrick
+            %https://corescholar.libraries.wright.edu/cgi/viewcontent.cgi?referer=https://www.google.com/&httpsredir=1&article=1325&context=etd_all
+            %cited 6 times! WTF?
+            
+            %Input:
+            %B - bezier matrix size (BezOu+1) x (BezOv+1)
+            %Ps - points evaluated on surface
+            %u and v- arrays of values ranging [0,1] for which to relate the
+            %surface points given
+            
+            %example:
+            %Ps(i,j)=Ps(u(i),v(j))
+            
+            %Output:
+            %P - control points matrix
+            
+            P=fn_PseduoInverse(B,u,v,Ps);
+        end %only calls the function
     end
 end
 %% extra functions (note: can't call one method from another)
@@ -727,7 +866,7 @@ Pmax = H + sqrt(H.^2 - K);
 Pmin = H - sqrt(H.^2 - K);
 end
 %Some more Bezier functions.
-function P=PseduoInverse(B,u,v,Ps)
+function P=fn_PseduoInverse(B,u,v,Ps)
 %method discovered in "BEZIER SURFACE GENERATION OF THE PATELLA"
 %by Dale A. Patrick
 %https://corescholar.libraries.wright.edu/cgi/viewcontent.cgi?referer=https://www.google.com/&httpsredir=1&article=1325&context=etd_all
@@ -760,20 +899,14 @@ function P=PseduoInverse(B,u,v,Ps)
 %[v2^3,v2^2,v2,1
 %...]
 
-%obtain bezier order (plus one) per parameter
-sz=size(B);
-v_BezOp1=sz(1); u_BezOp1=sz(2); %p1 for plus one.
+%obtain bezier order from cubic matrix B
+BezO=sqrt(numel(B))-1;
 
 %Create U and V (same size and symmetric order)
-U=(zeros(length(u),u_BezOp1));
+[U,V]=deal(zeros(length(u),BezO+1));
 for i=1:length(u)
-    for j=1:u_BezOp1
+    for j=1:BezO+1
         U(i,j)=u(i)^(j-1);
-    end
-end
-V=(zeros(length(v),v_BezOp1));
-for i=1:length(v)
-    for j=1:v_BezOp1
         V(i,j)=v(i)^(j-1);
     end
 end
@@ -783,10 +916,11 @@ for dim=1:size(Ps,3) %R3 dimensions (x,y,z)
     P(:,:,dim)=inv(B)*pinv(U)*Ps(:,:,dim)*pinv(V)'*inv(B'); %pinv stated in nested function
 end
     function A=pinv(A)
+        %psuedo inverse matrix (moore-pensrose)
         A=inv(A'*A)*A';
     end
 end
-function B=BezMatrix(BezO)
+function B=fn_BezMatrix(BezO)
 %Input:
 %BezO - bezier order of the u and v polynomials (symmetric)
 

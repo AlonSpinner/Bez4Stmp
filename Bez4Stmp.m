@@ -1,7 +1,6 @@
+%Written by Alon Spinner @ 6-7/19
+
 classdef Bez4Stmp
-    %For final project in faculty of mechanichal engineering, Technion
-    %2019.
-    %By Yam Ben Natan and Alon Spinner
     properties (SetAccess = private)  %equivalent to "read only" (Getable but not Setable)
         %all properties below are initalized in constructor
         Scan %pointCloud mx3. Point Cloud provided to algorithm
@@ -13,15 +12,16 @@ classdef Bez4Stmp
         Xcenter %double [x,y,z].
         Compact %m x n x 3 double matrix of compact node point cloud
         CP %BezCP class
+        PsuedoInverseCP %BezCP class 
     end
-    properties (SetAccess = public) %can be changed by user
+    properties (SetAccess = public) %can be changed by user. default values defined here
         GridLengthFcn=@(R,L) R*(0.5*R/L); %after downsampling: VerticesAmount*(GridLength^2)/(2*pi*R*L)~1 by construction
-        Cap=false; %true/false (patch on top of sphere or not). if true Slices must be 4.
-        SphLayers=1; %default
-        CylLayers=1;
+        Cap=true; %true/false (patch on top of sphere or not). if true Slices must be 4.
+        SphLayers=2;
+        CylLayers=2;
         Slices=4;
-        BezierOrder=3; %default
-        XcenterCalculationMethod='normalSTD'; %default
+        BezierOrder=3;
+        XcenterCalculationMethod='normalSTD'; %'GeomtreyAssumption'/'normalSTD'/'normalThreshold'
     end
     methods %public methods, accessible from outside the class
         function obj=Bez4Stmp(PntCldIn,varargin) %Constructor
@@ -77,7 +77,8 @@ classdef Bez4Stmp
             end
             
             %default values:
-            Time=true; MaxOptimizationIterions=20;
+            %rest of default values are defined on public parameters
+            Time=true; MaxOptimizationIterions=20; OptDisplay='iter';
             %Obtain inputs
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
@@ -86,10 +87,27 @@ classdef Bez4Stmp
                         Time=varargin{ind+1};
                     case 'maxoptimizationiterions'
                         MaxOptimizationIterions=varargin{ind+1};
+                    case 'optdisplay'
+                        OptDisplay=varargin{ind+1};
+                    case 'gridlengthfcn'
+                        obj.GridLengthFcn=varargin{ind+1};
+                    case 'cap'
+                        obj.Cap=varargin{ind+1};
+                    case 'sphlayers'
+                        obj.SphLayers=varargin{ind+1};
+                    case 'cyllayers'
+                        obj.CylLayers=varargin{ind+1};
+                    case 'slices'
+                        obj.Slices=varargin{ind+1};
+                    case 'bezierorder'
+                        obj.BezierOrder=varargin{ind+1};
+                    case 'XcenterCalculationMethod'
+                        obj.XcenterCalculationMethod=varargin{ind+1};
                 end
-            end
+            end            
+            
             %% Run
-            if Time, tic; end
+            if Time, tic; end %start counting time of process
             
             %introduce to parameters before any preprocessing to object
             obj.Scan=pointCloud(xyz);
@@ -123,19 +141,23 @@ classdef Bez4Stmp
             minR=min(r,R); maxR=max(r,R);
             [Ncyl,Nsph,Ncircum]=MeshNodesAmount(obj.SphLayers,obj.CylLayers,obj.Slices,obj.BezierOrder);
             P=CircleBellCrv(minR,L,Ncyl,Nsph,'RemoveTopEdge',obj.Cap);
-            P=flipud(P); %we want highest z in first row for BezCP construction
+            P=flipud(P); %we want highest z in the first row for BezCP construction
             xyz=RotateXZcurve(P,Ncircum); %rotate to create double size Nvert x Ncircum x 3
             xyz(:,:,1)=xyz(:,:,1)+Xcntr(1); xyz(:,:,2)=xyz(:,:,2)+Xcntr(2); %align vertical axis to pass through Xcenter
             obj.Compact=xyz;
             
-            %Optimize compact to create CP
+            %Create compact BezCP (CompactCP)
             if obj.Cap, CompactCP=BezCP(xyz,obj.BezierOrder,'method','CircularWithCap');
             else,  CompactCP=BezCP(xyz,obj.BezierOrder,'method','Circular'); end
-                
+            
+            %Optimize CompactCP by radially expanding the vertices to PntCld
             h=helpdlg('Optimization occuring. Please wait. . .');
-            obj.CP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display','iter',...
-                'MaxIterations',MaxOptimizationIterions);
+            obj.CP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display',OptDisplay,...
+                'MaxIterations',MaxOptimizationIterions); %expand CompactCP to PntCld
             close(h); %close helpdlg
+            
+            %find control points describiing optimized CP.Vertices mesh surface
+            obj.PsuedoInverseCP=obj.CP.PesudoInverseVertices;
             
             %if no cap, top edges whose location may vary across
             %top patches due to optimization to produce a peak point
@@ -143,7 +165,7 @@ classdef Bez4Stmp
                 obj.CP=obj.CP.UnifyEdge2Peak('top');
             end
             
-            if Time, toc; end
+            if Time, toc; end %display time it took for process
         end
         function obj=UpdateObj(obj,varargin)       
             %Varargin Input:
@@ -162,7 +184,7 @@ classdef Bez4Stmp
                     %CP
             
             %default values:
-            Time=true; MaxOptimizationIterions=20;
+            Time=true; MaxOptimizationIterions=20; OptDisplay='iter';
             %Obtain inputs
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
@@ -171,6 +193,8 @@ classdef Bez4Stmp
                         Time=varargin{ind+1};
                     case 'maxoptimizationiterions'
                         MaxOptimizationIterions=varargin{ind+1};
+                    case 'display'
+                        OptDisplay=varargin{ind+1};
                 end
             end
             %% Run
@@ -198,19 +222,23 @@ classdef Bez4Stmp
             minR=min(r,R); maxR=max(r,R);
             [Ncyl,Nsph,Ncircum]=MeshNodesAmount(obj.SphLayers,obj.CylLayers,obj.Slices,obj.BezierOrder);
             P=CircleBellCrv(minR,L,Ncyl,Nsph,'RemoveTopEdge',obj.Cap);
-            P=flipud(P); %we want highest z in first row for BezCP construction
+            P=flipud(P);  %we want highest z in the first row for BezCP construction
             xyz=RotateXZcurve(P,Ncircum); %rotate to create double size Nvert x Ncircum x 3
             xyz(:,:,1)=xyz(:,:,1)+Xcntr(1); xyz(:,:,2)=xyz(:,:,2)+Xcntr(2); %align vertical axis to pass through Xcenter
             obj.Compact=xyz;
             
-            %Optimize compact to create CP
+            %Create compact BezCP (CompactCP)
             if obj.Cap, CompactCP=BezCP(xyz,obj.BezierOrder,'method','CircularWithCap');
             else,  CompactCP=BezCP(xyz,obj.BezierOrder,'method','Circular'); end
-                
+            
+            %Optimize CompactCP by radially expanding the vertices to PntCld
             h=helpdlg('Optimization occuring. Please wait. . .');
-            obj.CP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display','iter',...
-                'MaxIterations',MaxOptimizationIterions);
+            obj.CP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display',OptDisplay,...
+                'MaxIterations',MaxOptimizationIterions); %expand CompactCP to PntCld
             close(h); %close helpdlg
+            
+            %find control points describiing optimized CP.Vertices mesh surface
+            obj.PsuedoInverseCP=obj.CP.PesudoInverseVertices;
             
             %if no cap, top edges whose location may vary across
             %top patches due to optimization to produce a peak point
@@ -222,7 +250,7 @@ classdef Bez4Stmp
         end
     end
     methods (Static)
-        function Ax=DrawPointCloud(PntCld,varargin)
+        function varargout=DrawPointCloud(PntCld,varargin)
             %INPUT:
             %PointCloud - can be of differnent types:
             %numeric matrix of size mx3
@@ -237,9 +265,9 @@ classdef Bez4Stmp
             %title - title of axes
             
             %OUTPUT:
-            %CldPHandle - a handle to the axes object
+            %Outputs by varargout:
+            %varargout{1} = Ax - returns the axes handle the surfaces were drew on
             
-            %check input. if is double, create a pointCloud object
             switch class(PntCld)
                 case 'double'
                     sz=size(PntCld);
@@ -298,12 +326,15 @@ classdef Bez4Stmp
                 colormap(Ax,ColorMap);
             else
                 if numel(Color)==3
-                    %         Color=Color.*ones(size(PntCld));
                     pcshow(PntCld,Color,'MarkerSize',Msize,'Parent',Ax);
                 else
-                    error('Color must be a 3x1 or 1x3 RGB vector');
+                    error('Color must be a 1x3 RGB vector');
                 end
             end
+            
+             %Create output
+            if nargout==0, varargout={};
+            else, varargout={Ax}; end
         end
         function [hd,pInd,qInd]=Hausdorff(P,Q,varargin)
             % Calculates the Hausdorff Distance, hd, between two sets of points, P and
