@@ -1,7 +1,7 @@
 %% Peaks
 PtchAmnt=16;
 Layers=sqrt(PtchAmnt);
-BezO=9; 
+BezO=4; 
 N=Layers*BezO+1;
 [X,Y,Z]=peaks(N);
 MeshNodes=zeros(size(X));
@@ -9,54 +9,54 @@ MeshNodes(:,:,1)=X; MeshNodes(:,:,2)=Y; MeshNodes(:,:,3)=Z;
 CP=BezCP(MeshNodes,BezO,'Method','Block');
 PseudoInverseCP=CP.PesudoInverseVertices;
 
+%move axes into subplot array
+fig=figure('color',[0,0,0],'units','normalized','outerposition',[0 0 1 1]);
+Ax11=subplot(1,2,1,BezCP.CreateDrawingAxes(fig),'parent',fig);
+Ax12=subplot(1,2,2,BezCP.CreateDrawingAxes(fig),'parent',fig);
+
 %compare PeaksCP to original surface
 %PeaksCP - mesh nodes of peaks surface are the control points for the bezier surface mesh
-Ax11=CP.DrawBezierPatches('color',[1,0,0],'facealpha',1,'title','CP Bezier mesh vs Peaks Surface');
-BezCP.DrawPointCloud(CP.Vertices,'color',[0,1,0],'msize',20,'Ax',Ax11); %draw control points
-surf(Ax11,X,Y,Z,'EdgeColor','none','FaceAlpha',0.5)
+srfH=CP.DrawBezierPatches('Ax',Ax11,'color',[0,0.7,0.7],'facealpha',1,...
+    'edgecolor',0.5*[1,1,1],'title','Control Points of CP are vertices in Peaks Surface');
+pcH=BezCP.DrawPointCloud(MeshNodes,'Ax',Ax11,'color',[1,0,0],'msize',20);
+subset=[srfH(1),pcH];
+legend(subset,'\color{white}CP Bezier mesh','\color{white}Peaks surface vertices & CP control points')
 
 %compare PseudoPeaksCP to original peaks surface
 %PseudoPeaksCP - bezier surface mesh attempts to equal peaks surface
-Ax12=PseudoInverseCP.DrawBezierPatches('color',[1,1,1],'title','PsuedoInverseCP Bezier mesh vs Peaks Surface');
-BezCP.DrawPointCloud(PseudoInverseCP.Vertices,'color',[0,1,0],'msize',20,'Ax',Ax12); %draw control points
-surf(Ax12,X,Y,Z,'EdgeColor','none','FaceAlpha',1)
-
-Ax13=PseudoInverseCP.DrawBezierPatches('color',[1,1,1],'title','PsuedoInverseCP Bezier mesh vs CP Bezier mesh');
-CP.DrawBezierPatches('color',[1,0,0],'facealpha',1,'Ax',Ax13);
-
-%obtain figure handles of recently created axes
-h11=Ax11.Parent; h12=Ax12.Parent; h13=Ax13.Parent;
-
-%move axes into subplot array
-fig=figure('color',[0,0,0],'units','normalized','outerposition',[0 0 1 1]);
-subplot(1,3,1,Ax11,'parent',fig);
-subplot(1,3,2,Ax12,'parent',fig);
-subplot(1,3,3,Ax13,'parent',fig);
-
-%delete old figures
-close(h11,h12,h13);
-clear('Ax11','Ax12','Ax13');
-
+srfH=PseudoInverseCP.DrawBezierPatches('Ax',Ax12,'color',[1,1,1],'facealpha',1,...
+    'edgecolor',0.5*[1,1,1],'title','Control points of PsuedoInverseCP are outside Peaks Surface');
+pcH1=BezCP.DrawPointCloud(PseudoInverseCP.Vertices,'Ax',Ax12,'color',[0,1,0],'msize',20); %draw control points
+pcH2=BezCP.DrawPointCloud(MeshNodes,'Ax',Ax12,'color',[1,0,0],'msize',20);
+subset=[srfH(1),pcH1,pcH2];
+legend(subset,'\color{white}PseudoInverseCP Bezier mesh','\color{white}PsuedoInverseCP control points',...
+    '\color{white}Peaks surface vertices')
 %% Calculate 
-Stmp=Bez4Stmp('Roie.stl','Cap',true,'SphLayers',1,'CylLayers',1,'Slices',4,'BezierOrder',3,...
+Stmp=Bez4Stmp('Roie.stl','Cap',true,'SphLayers',2,'CylLayers',2,'Slices',4,'BezierOrder',3,...
     'XcenterCalculationMethod','normalSTD');
 
 %% Update
 Stmp.Cap=0;
-Stmp.Slices=10;
-Stmp.SphLayers=3;
+Stmp.Slices=4;
+Stmp.SphLayers=2;
 Stmp.CylLayers=2;
 Stmp.BezierOrder=3;
 Stmp=Stmp.UpdateObj;
 
 %% Draw Patches
+fig=figure('color',[0,0,0]);
+Ax=Stmp.CreateDrawingAxes(fig);
+
 pausetime=0;
 % Stmp.CP.DrawBezierPatches('pausetime',pausetime);
-% Stmp.PsuedoInverseCP.DrawBezierPatches('pausetime',pausetime);
-Stmp.PsuedoInverseCP.DrawBezierPatches('curvature','gaussian','PauseTime',0);
+Stmp.PsuedoInverseCP.DrawBezierPatches('Ax',Ax,'pausetime',pausetime);
+% Stmp.PsuedoInverseCP.DrawControlPoints('Ax',Ax,'pausetime',pausetime);
+% Stmp.PsuedoInverseCP.DrawBezierPatches('curvature','gaussian','PauseTime',0);
 
 %% Draw point clouds - orginial, compact and surfaces
-Ax=Stmp.DrawPointCloud(Stmp.PointCloud,'color',[1,0,0],'msize',20); %original
+fig=figure('color',[0,0,0]);
+Ax=Stmp.CreateDrawingAxes(fig);
+Stmp.DrawPointCloud(Stmp.PointCloud,'color',[1,0,0],'msize',20,'Ax',Ax); %original
 Stmp.DrawPointCloud(Stmp.Compact,'color',[0,0,1],'msize',20,'Ax',Ax); %compact
 Stmp.DrawPointCloud(Stmp.PsuedoInverseCP.CombinePatches(30),'color',[1,1,1],'Ax',Ax); %compact
 Stmp.DrawPointCloud(Stmp.PsuedoInverseCP.Vertices,'color',[0,1,0],'Ax',Ax,'msize',20); %CP vertices
@@ -78,7 +78,9 @@ if m(3)>Xcntr(3), t=(m-Xcntr)/norm(m-Xcntr,2);
 else, t=[(m(1:2)-Xcntr(1:2)),0]/norm(m(1:2)-Xcntr(1:2),2); end
 rhd=abs(dot(Phd-Qhd,t));
 %plot
-Ax=Stmp.DrawPointCloud(Stmp.PointCloud,'color',[0,0,1],'msize',15); %original
+fig=figure('color',[0,0,0]);
+Ax=Stmp.CreateDrawingAxes(fig);
+Stmp.DrawPointCloud(Stmp.PointCloud,'color',[0,0,1],'msize',15,'Ax',Ax); %original
 Stmp.DrawPointCloud(Stmp.PsuedoInverseCP.CombinePatches(30),'color',[1,1,1],'Ax',Ax); %compact
 Stmp.DrawPointCloud([Phd;Qhd],'color',[1,0,0],'msize',20,'Ax',Ax,...
     'title',sprintf('Hausdorff distance %.2g with Radial displacement of %.2g',hd,rhd)); %compact

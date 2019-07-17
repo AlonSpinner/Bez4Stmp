@@ -1,5 +1,4 @@
 %Written by Alon Spinner @ 6-7/19
-
 classdef Bez4Stmp
     properties (SetAccess = private)  %equivalent to "read only" (Getable but not Setable)
         %all properties below are initalized in constructor
@@ -11,8 +10,8 @@ classdef Bez4Stmp
         SphereRadius %double 1x1.
         Xcenter %double [x,y,z].
         Compact %m x n x 3 double matrix of compact node point cloud
-        CP %BezCP class
-        PsuedoInverseCP %BezCP class 
+        RegisteredBezCP %BezCP class
+        StmpBezCP %BezCP class
     end
     properties (SetAccess = public) %can be changed by user. default values defined here
         GridLengthFcn=@(R,L) R*(0.5*R/L); %after downsampling: VerticesAmount*(GridLength^2)/(2*pi*R*L)~1 by construction
@@ -25,6 +24,7 @@ classdef Bez4Stmp
     end
     methods %public methods, accessible from outside the class
         function obj=Bez4Stmp(PntCldIn,varargin) %Constructor
+            %{
             %Input:
             %PntCldIn - points to xyz double matrix of size mx3 point
             %cloud OR pointCloud class object.
@@ -38,7 +38,7 @@ classdef Bez4Stmp
             
             %Output:
             %initalized class
-            
+            %}
             %% Verify and modify inputs
             if nargin==0 %if no input was provided
                 clear obj %delete default object which was created when method was called
@@ -55,14 +55,27 @@ classdef Bez4Stmp
                 case 'double'
                     xyz=PntCldIn;
                 case 'char'
-                    FileName=PntCldIn;
-                    [~,~,ext]=fileparts(FileName);
+                    FileFullName=PntCldIn;
+                    [~,FileName,ext]=fileparts(FileFullName);
                     switch ext
                         case '.stl'
-                            [~,xyz]=stlread(FileName); %obtain vertices of STL
+                            [~,xyz]=stlread(FileFullName); %obtain vertices of STL
                         case '.mat'
-                            load(FileName,'xyz'); %assumes mat file contains variable named xyz and loads it
-                            if isa(xyz,'pointCloud'), xyz=xyz.Location; end %if point cloud and not mx3 double. make it mx3 double
+                            s=whos;
+                            doubleClassMatches= strcmp({s.class},'double');
+                            pointCloudClassMatches= strcmp({s.class},'pointCloud');
+                            NameMatches=strcmp({s.name},FileName);
+                            if any((doubleClassMatches | pointCloudClassMatches) & NameMatches)
+                                eval(['xyz=',s(NameMatches).name,';']);
+                            elseif any(pointCloudClassMatches) %take the first pointCloud class variable in list
+                                vars={s(pointCloudClassMatches).name};
+                                eval(['xyz=',vars{1},';']);
+                            elseif any(doubleClassMatches) %take the first double class variable in list
+                                vars={s(doubleClassMatches).name};
+                                eval(['xyz=',vars{1},';']);
+                            end 
+                            %convert input to double matrix incase its pointCloud
+                            if isa(xyz,'pointCloud'), xyz=xyz.Location; end
                     end
                 case 'pointCloud' %incase user went ahead and created a point cloud object
                     xyz=PntCldIn.Location;
@@ -73,7 +86,7 @@ classdef Bez4Stmp
                         ' -mx3 double matrix containing [x,y,z]\n',...
                         ' -pointCloud class variable\n',...
                         ' -file name of stl\n',...
-                        ' -file name of .m file containing pointCloud or mx3 double matrix named "xyz"']));
+                        ' -file name of .m file containing pointCloud or mx3 double matrix']));
             end
             
             %default values:
@@ -104,7 +117,7 @@ classdef Bez4Stmp
                     case 'XcenterCalculationMethod'
                         obj.XcenterCalculationMethod=varargin{ind+1};
                 end
-            end            
+            end
             
             %% Run
             if Time, tic; end %start counting time of process
@@ -152,22 +165,23 @@ classdef Bez4Stmp
             
             %Optimize CompactCP by radially expanding the vertices to PntCld
             h=helpdlg('Optimization occuring. Please wait. . .');
-            obj.CP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display',OptDisplay,...
+            obj.RegisteredBezCP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display',OptDisplay,...
                 'MaxIterations',MaxOptimizationIterions); %expand CompactCP to PntCld
             close(h); %close helpdlg
             
             %find control points describiing optimized CP.Vertices mesh surface
-            obj.PsuedoInverseCP=obj.CP.PesudoInverseVertices;
+            obj.StmpBezCP=obj.RegisteredBezCP.PesudoInverseVertices;
             
             %if no cap, top edges whose location may vary across
             %top patches due to optimization to produce a peak point
-            if ~obj.Cap                  
-                obj.CP=obj.CP.UnifyEdge2Peak('top');
+            if ~obj.Cap
+                obj.StmpBezCP=obj.StmpBezCP.UnifyEdge2Peak('top');
             end
             
             if Time, toc; end %display time it took for process
         end
-        function obj=UpdateObj(obj,varargin)       
+        function obj=UpdateObj(obj,varargin)
+            %{
             %Varargin Input:
             %Time - true/false. measure time of function process (default== true)
             %MaxOptimizationIterions - default (30)
@@ -179,9 +193,10 @@ classdef Bez4Stmp
                     %PointCloud  (reminder: GridLengthFcn changes)
                     %Xcenter     (reminder: Xcenter calculation method can)
                     %change
-                    %SphereRadius 
-                    %Compact 
+                    %SphereRadius
+                    %Compact
                     %CP
+            %}
             
             %default values:
             Time=true; MaxOptimizationIterions=20; OptDisplay='iter';
@@ -198,15 +213,25 @@ classdef Bez4Stmp
                 end
             end
             %% Run
-            if Time, tic; end
+            if Time, tic; end %start counting time of process
             
-            %shorten writing for convenience
-            L=obj.BoundingCylinderLength;
-            R=obj.BoundingCylinderRadius;
-
-            %DownSample by GridLengthFcn and introduce parameters
+            %introduce to parameters before any preprocessing to object
+            obj.Scan=pointCloud(xyz);
+            %align with z axis, sets base on z=0, sort vertices by z value
+            T2Z_xyz=Transform2Z(xyz);
+            %find Radius and Length of bounding Cylinder
+            [R,L]=BoundingCylinder(T2Z_xyz);
+            obj.BoundingCylinderLength=L; %introduce to parameters
+            obj.BoundingCylinderRadius=R; %introduce to parameters
+            
+            %Create pointCloud object and introduce to parameters
+            PntCld=pointCloud(T2Z_xyz); %create point cloud object from preprocessed point cloud
+            obj.T2ZScan=PntCld; %introduce to parameters
+            
+            %DownSample - final part of preprocessing - and introduce to
+            %parameters
             GridLength=obj.GridLengthFcn(R,L); %obtain voxel edge length by default function
-            PntCld=pcdownsample(obj.T2ZScan,'gridAverage',GridLength); %Downsample by grid legnth
+            PntCld=pcdownsample(PntCld,'gridAverage',GridLength); %Downsample by grid legnth
             obj.PointCloud=PntCld; %introduce to parameters
             
             %Find Xcenter - point seperating between sphereical and
@@ -222,7 +247,7 @@ classdef Bez4Stmp
             minR=min(r,R); maxR=max(r,R);
             [Ncyl,Nsph,Ncircum]=MeshNodesAmount(obj.SphLayers,obj.CylLayers,obj.Slices,obj.BezierOrder);
             P=CircleBellCrv(minR,L,Ncyl,Nsph,'RemoveTopEdge',obj.Cap);
-            P=flipud(P);  %we want highest z in the first row for BezCP construction
+            P=flipud(P); %we want highest z in the first row for BezCP construction
             xyz=RotateXZcurve(P,Ncircum); %rotate to create double size Nvert x Ncircum x 3
             xyz(:,:,1)=xyz(:,:,1)+Xcntr(1); xyz(:,:,2)=xyz(:,:,2)+Xcntr(2); %align vertical axis to pass through Xcenter
             obj.Compact=xyz;
@@ -233,181 +258,95 @@ classdef Bez4Stmp
             
             %Optimize CompactCP by radially expanding the vertices to PntCld
             h=helpdlg('Optimization occuring. Please wait. . .');
-            obj.CP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display',OptDisplay,...
+            obj.RegisteredBezCP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display',OptDisplay,...
                 'MaxIterations',MaxOptimizationIterions); %expand CompactCP to PntCld
             close(h); %close helpdlg
             
             %find control points describiing optimized CP.Vertices mesh surface
-            obj.PsuedoInverseCP=obj.CP.PesudoInverseVertices;
+            obj.StmpBezCP=obj.RegisteredBezCP.PesudoInverseVertices;
             
             %if no cap, top edges whose location may vary across
             %top patches due to optimization to produce a peak point
-            if ~obj.Cap                  
-                obj.CP.UnifyEdge2Peak('top')
+            if ~obj.Cap
+                obj.StmpBezCP=obj.StmpBezCP.UnifyEdge2Peak('top');
             end
             
-            if Time, toc; end
+            if Time, toc; end %display time it took for process
         end
-    end
-    methods (Static)
-        function varargout=DrawPointCloud(PntCld,varargin)
-            %INPUT:
-            %PointCloud - can be of differnent types:
-            %numeric matrix of size mx3
-            %numeric matrix of size mxnx3 where the third element
-            %corresponds to [x,y,z]
-            %pointCloud class object
-            %varargin:
-            %Color - color as [R,G,B] or matlab strings
-            %ColorMap - colormap as string ('jet','parula'...)
-            %Msize - numeric value for markersize
-            %Ax - handle of axes
-            %title - title of axes
+        function varargout=HausdorffAsses(obj,varargin)
+            %{
+            Varagin inputs:
+            Ax - handle of axes. if provided - drawns on them. if not -
+            doesnt draw.
+            N - number of points drawn in each evauluated patch are N^2. by default N=30
+            ZThreshold - filters out all points below ZThreshold
             
-            %OUTPUT:
-            %Outputs by varargout:
-            %varargout{1} = Ax - returns the axes handle the surfaces were drew on
-            
-            switch class(PntCld)
-                case 'double'
-                    sz=size(PntCld);
-                    if ~(numel(sz)==2 && sz(2)==3) && ~(numel(sz)==3 && sz(3)==3)
-                        error(sprintf(['When introducing "double" PntCld make sure',...
-                            'its of size nx3 correorsponding to [x,y,z] or mxnx3',...
-                            'where the third size element corresponds to [x,y,z]']));
-                    end
-                case 'pointCloud'
-                    PntCld=PntCld.Location;
-            end
-            
-            %Obtain varargin inputs
+            Outputs by varargout:
+            varargout{1} = hausdorff distance
+            varargout{2} = radial hausdorff distance
+            varargout{3} = handle array of graphic objects
+            %}
+            N=30; zThreshold=30;
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
                 switch comm
+                    case 'n'
+                        N=varargin{ind+1};
                     case 'ax'
                         Ax=varargin{ind+1};
-                    case 'colormap'
-                        ColorMap=varargin{ind+1};
-                    case 'color'
-                        Color=varargin{ind+1};
-                    case 'msize'
-                        Msize=varargin{ind+1};
-                    case 'title'
-                        Title=varargin{ind+1};
+                    case 'zthreshold'
+                        zThreshold=varargin{ind+1};
                 end
             end
             
-            %varargin input check
-            %if both Color and ColorMap are provided, only color will be relevant.
-            if exist('ColorMap','var') && exist('Color','var')
-                warning('both ColorMap and Color were provided. Draws by ColorMap');
+            %find hausdroff distance and the points who make it
+            P=obj.PointCloud.Location;
+            P=P(P(:,3)>zThreshold,:); %filter out buttom noise
+            Q=obj.StmpBezCP.CombinePatches(N);
+            szQ=size(Q);
+            Q=reshape(Q,szQ(1)*szQ(2),3); %reshape Q to mx3
+            Q=Q(Q(:,3)>zThreshold,:); %filter buttom noise
+            [hd,pInd,qInd]=BezCP.Hausdorff(P,Q); %computing hausdorff distance
+            Phd=P(pInd,:); Qhd=Q(qInd,:); %obtain points whose distance is the hausdorff distance
+            
+            %calculate radial distance (radial off mean point of Phd and Qhd)
+            m=mean([Phd;Qhd]);
+            Xcntr=obj.Xcenter;
+            if m(3)>Xcntr(3), t=(m-Xcntr)/norm(m-Xcntr,2);
+            else, t=[(m(1:2)-Xcntr(1:2)),0]/norm(m(1:2)-Xcntr(1:2),2); end
+            rhd=abs(dot(Phd-Qhd,t)); %radial hausdorff distance
+            
+            %plot if axes were provided
+            if exist('Ax','var') && isgraphics(Ax,'Axes')
+                Handles=gobjects(1,3);
+                Handles(1)=BezCP.DrawPointCloud(obj.PointCloud,'color',[0,0,1],'msize',15,'Ax',Ax); %original
+                Handles(2)=BezCP.DrawPointCloud(obj.StmpBezCP.CombinePatches(30),'color',[1,1,1],'Ax',Ax); %compact
+                Handles(3)=BezCP.DrawPointCloud([Phd;Qhd],'color',[1,0,0],'msize',20,'Ax',Ax,...
+                    'title',sprintf('Hausdorff distance %.2g with Radial displacement of %.2g',hd,rhd)); %compact
             end
             
-            %Default values and some more input check (in Color)
-            if ~exist('Ax','var') || isempty(Ax)
-                Fig=figure('color',[0,0,0]);
-                Ax=axes(Fig,'color',[0,0,0],'ZColor',[1,1,1],'XColor',[1,1,1],'YColor',[1,1,1]);
-                xlabel(Ax,'x'); ylabel(Ax,'y'); zlabel(Ax,'z');
-                axis(Ax,'equal'); grid(Ax,'on'); hold(Ax,'on'); view(Ax,3);
-            end
-            if exist('Title','var') && isa(Title,'char') %set title if provided
-                title(Ax,['\color{white}',Title]);
-            end
-            if ~exist('Msize','var') || isempty(Msize)
-                Msize=1;
-            end
-            if ~exist('ColorMap','var') || isempty(ColorMap)
-                ColorMap='parula';
-            end
-            
-            %draw. function call pcshow depends on color choice
-            if ~exist('Color','var') || isempty(Color)
-                pcshow(PntCld,'MarkerSize',Msize,'Parent',Ax);
-                colormap(Ax,ColorMap);
-            else
-                if numel(Color)==3
-                    pcshow(PntCld,Color,'MarkerSize',Msize,'Parent',Ax);
-                else
-                    error('Color must be a 1x3 RGB vector');
-                end
-            end
-            
-             %Create output
+            %Create output
             if nargout==0, varargout={};
-            else, varargout={Ax}; end
+            else, varargout={hd,rhd,Handles}; end
         end
-        function [hd,pInd,qInd]=Hausdorff(P,Q,varargin)
-            % Calculates the Hausdorff Distance, hd, between two sets of points, P and
-            % Q (which could be two trajectories). Sets P and Q must be matrices with
-            % an equal number of columns (dimensions), though not necessarily an equal
-            % number of rows (observations).
-            
-            %Input:
-            %P - double matrix m1xn
-            %Q - double matrix m2xn
-            
-            %varargin Input:
-            %'OneSide' - loops on only on P for minimal distances
-            
-            %Output:
-            %hd -scalar hausdorff distance
-            %pInd,qInd - hd=norm(P(pIind,:)-Q(qInd,:))
-            
-            Method='TwoSide'; %classic hausdorff defintion
-            if numel(varargin)>0 && strcmpi(varargin{1},'OneSide')
-                Method='OneSide';
-            end
-            
-            szP=size(P); szQ=size(Q);
-            if szP(2)~=szQ(2), error('dimension size (number of columns) of both inputs need to be the same'); end
-            
-            ed2=@(p,q) sum((p-q).^2,2); %euclidian distant squared
-            [pInd,qInd]=deal(ones(2,1));
-            hd2P=0; %initalize
-            
-            %loop on P
-            for ip=1:szP(1)
-                [hd2,iq]=min(ed2(P(ip,:),Q)); %hausdorff distance
-                if hd2>hd2P
-                    hd2P=hd2;
-                    pInd(1)=ip;
-                    qInd(1)=iq;
-                end
-            end
-            %loop on Q
-            hd2Q=0;
-            if strcmp(Method,'TwoSide')
-                for iq=1:szQ(1)
-                    [hd2,ip]=min(ed2(Q(iq,:),P)); %hausdorff distance
-                    if hd2>hd2Q
-                        hd2Q=hd2;
-                        pInd(2)=ip;
-                        qInd(2)=iq;
-                    end
-                end
-            end
-            %conclude
-            [hd2,Ind]=max([hd2P,hd2Q]);
-            pInd=pInd(Ind);
-            qInd=qInd(Ind);
-            hd=sqrt(hd2);
-        end
-    end %methods that have no interaction with the object created by the class
+    end
 end
 %% algorithm pipeline functions
 function Newxyz=Transform2Z(xyz)
-%Translate xyz points so that CGxy=[0,0], floor  is z=0, and primary
-%axis of the convex shape will be the Z axis.
-%NewXYZ is also sorted by Z (first row with minimal Z and last row with
-%maximal)
+%{
+Translate xyz points so that CGxy=[0,0], floor  is z=0, and primary
+axis of the convex shape will be the Z axis.
+NewXYZ is also sorted by Z (first row with minimal Z and last row with
+maximal)
 
-%Input:
-%xyz - [x,y,z] numeric matrix mX3
+Input:
+xyz - [x,y,z] numeric matrix mX3
 
-%Output:
-%Newxyz - [x,y,z] numeric matrix mX3.
+Output:
+Newxyz - [x,y,z] numeric matrix mX3.
 
-%centerlize xyz and compute pca analysis
+centerlize xyz and compute pca analysis
+%}
 XYZ0=xyz-mean(xyz);
 V=pca(XYZ0);
 t=V(:,1); %col vec
@@ -435,18 +374,21 @@ Txyz(:,3)=Txyz(:,3)-min(Rxyz(:,3)); %translate
 Newxyz=Txyz(Indx,:);
 end
 function [R,L]=BoundingCylinder(xyz)
-%Assumption:
-%xyz was already processed by function Transfom2Z:
-%it is aligned with z axis, has base on z=0
+%{
+Assumption:
+xyz was already processed by function Transfom2Z:
+it is aligned with z axis, has base on z=0
 
-%Input
-%xyz - matrix of [x,y,z] point cloud ((mx3)
+Input
+xyz - matrix of [x,y,z] point cloud ((mx3)
 
-%Output:
-%R - radius of bounding cylinder
-%L - Length of bouding cylinder
+Output:
+R - radius of bounding cylinder
+L - Length of bouding cylinder
 
-% Calculate L
+Calculate L
+%}
+
 L=max(xyz(:,3));
 
 % Calculate R
@@ -466,35 +408,36 @@ CHull=xy(convhull(xy),:);  %[x,y] mat. find convex hull points
 [~,R]=fitcircle(CHull,'linear');
 end
 function Xcenter=FindXcenter(PtCld,method,varargin)
-%Assumption:
-%--PtCld was already processed by function Transfom2Z:
-%it is aligned with z axis, has base on z=0
-%--PtCld has already gone through downsampling using GridLengthFcn(R,L) and
-%function pcdownsample.
+%{
+Assumption:
+--PtCld was already processed by function Transfom2Z:
+it is aligned with z axis, has base on z=0
+--PtCld has already gone through downsampling using GridLengthFcn(R,L) and
+function pcdownsample.
 
-%Input:
-%PtCldP  - pointCloud object
-%Method - 'GeomtreyAssumption'/'normalSTD'/'normalThreshold'
-%Varargin - depending on method:
-%normalSTD - BoundingCylinderLength
-%GeomtreyAssumption: BoundingCylinderRadius
-%normalThreshold: requires Threshold scalar ranges from [0,1]
-%suggestion: 0.4
+Input:
+PtCldP  - pointCloud object
+Method - 'GeomtreyAssumption'/'normalSTD'/'normalThreshold'
+Varargin - depending on method:
+normalSTD - BoundingCylinderLength
+GeomtreyAssumption: BoundingCylinderRadius
+normalThreshold: requires Threshold scalar ranges from [0,1]
+suggestion: 0.4
 
-%Output:
-%Xcenter [x,y,z] is the node that seprates between the "sphere" part and the
-%"cylinder" part in the given cloud point
+Output:
+Xcenter [x,y,z] is the node that seprates between the "sphere" part and the
+"cylinder" part in the given cloud point
 
-%Assumptions:
-%CldP main axis
-%     ___
-%   /     \
-% /        |
-%|     x   |
-%|         |
-%|         |
-%|         |
-
+Assumptions:
+CldP main axis
+    ___
+  /     \
+/        |
+|     x   |
+|         |
+|         |
+|         |
+%}
 
 for ind=1:2:length(varargin)
     comm=lower(varargin{ind});
@@ -552,43 +495,47 @@ Xcenter=[mean(AbvPtCld.Location(:,[1,2])),Znode];
 
 end
 function [Ncyl,Nsph,Ncircum]=MeshNodesAmount(SphLayers,CylLayers,Slices,BezierOrder)
-%Input:
-%CylLayers, SphLayers - amount of layers in spherical/cylinderical part
-%Slices - amount of bezier patches on the circumference in a given
-%Layer
-%BezierOrder - polynomial order of bezier patches (symmeterical for both
-%parameters)
+%{
+Input:
+CylLayers, SphLayers - amount of layers in spherical/cylinderical part
+Slices - amount of bezier patches on the circumference in a given
+Layer
+BezierOrder - polynomial order of bezier patches (symmeterical for both
+parameters)
 
-%Output:
-%Ncyl - amount of points in a vertical line (defacto z direction) in
-%cylinderical part
-%Nsph - amount of points in a vertical line (defacto z direction) in
-%spherical part
-%Ncircm - amount of points in a horizontal (circumference of stump) line
+Output:
+Ncyl - amount of points in a vertical line (defacto z direction) in
+cylinderical part
+Nsph - amount of points in a vertical line (defacto z direction) in
+spherical part
+Ncircm - amount of points in a horizontal (circumference of stump) line
 
-%Ncircum=(BezierOrder+1)+(Slices-1)*BezierOrder=CakeLayers*BezierOrder
-%Nvert=(BezierOrder+1)+(Layers-2)*BezierOrder+(BezierOrder-1)=CakeSlices*BezierOrder+1
+Ncircum=(BezierOrder+1)+(Slices-1)*BezierOrder=CakeLayers*BezierOrder
+Nvert=(BezierOrder+1)+(Layers-2)*BezierOrder+(BezierOrder-1)=CakeSlices*BezierOrder+1
+%}
 
 Ncyl=CylLayers*BezierOrder+1;
 Nsph=SphLayers*BezierOrder; %1 less point than Ncyl as it is shared with cylinder
 Ncircum=Slices*BezierOrder;
 end
 function P=CircleBellCrv(R,h,Ncyl,Nsph,varargin)
-%Input:
-%R - radius
-%h - height
-%Ncyl - number of points in "cylinderical" part
-%Nsph - number of points in "Spherical" part
+%{
+Input:
+R - radius
+h - height
+Ncyl - number of points in "cylinderical" part
+Nsph - number of points in "Spherical" part
 
-%Varargin Inputs:
-%RemoveTopEdge - true/false of spherical part. (default=true)
-%false ensures that the spherical top points are all the
-%same point (the peak point is repeated)
-%RemoveButtomEdge - true/false of spherical part (default=true)
-%false ensures that spherical buttom points and cylinderical
-%points are the same (repeated points)
-%Output:
-%P - [x,y] (size (Nsph+Ncyl)x2 of evaluated points
+Varargin Inputs:
+RemoveTopEdge - true/false of spherical part. (default=true)
+false ensures that the spherical top points are all the
+same point (the peak point is repeated)
+RemoveButtomEdge - true/false of spherical part (default=true)
+false ensures that spherical buttom points and cylinderical
+points are the same (repeated points)
+Output:
+P - [x,y] (size (Nsph+Ncyl)x2 of evaluated points
+%}
 
 %---           ^
 %  ^  \        |
@@ -631,15 +578,17 @@ r=arrayfun(fcnrz, z);
 P=[r(:),z(:)];
 end
 function xyz=RotateXZcurve(xz,n)
-%Input:
-%xz [x,z] of evalualted points on 2D curve (mx2 array)
-%n - multiplyer amount
+%{
+Input:
+xz [x,z] of evalualted points on 2D curve (mx2 array)
+n - multiplyer amount
 
-%Output:
-%xyz  evaluated points on 3D surface (mxn3 array) where depth dimension is
-%       orginized [x,y]z.
-%       created by turnning the xy curve n times around the y axis. each
-%       time by 2*pi/N amount
+Output:
+xyz  evaluated points on 3D surface (mxn3 array) where depth dimension is
+      orginized [x,y]z.
+      created by turnning the xy curve n times around the y axis. each
+      time by 2*pi/N amount
+%}
 
 m=size(xz,1); %amount of evaluated points on curve
 theta=linspace(0,2*pi,n+1);
@@ -654,44 +603,46 @@ end
 xyz=cat(3,X,Y,Z);
 end
 function CP=RadialOptimization4CP(CP,StaticPntCld,Rbounds,Xcenter,varargin)
-%Blow up CP.Vertices to StaticPntCld using fmincon (optimization)
+%{
+Blow up CP.Vertices to StaticPntCld using fmincon (optimization)
 
-%two methods for radial optimization in this code:
-%--cylinderical: radial optimization from the Xcenter axis from points
-%below Xcenter (zwise)
-%--spherical: radial optimization from Xcenter for points above Xcenter
-%(zwise)
+two methods for radial optimization in this code:
+--cylinderical: radial optimization from the Xcenter axis from points
+below Xcenter (zwise)
+--spherical: radial optimization from Xcenter for points above Xcenter
+(zwise)
 
-%Algorithm Assumption:
-%--CP.Vertices are bounded within StaticPntCld.
-%--to register bezier surfaces onto StaticPntCLd one must expand/shrink CP.Vertices radially
-%from a given point/axis.
+Algorithm Assumption:
+--CP.Vertices are bounded within StaticPntCld.
+--to register bezier surfaces onto StaticPntCLd one must expand/shrink CP.Vertices radially
+from a given point/axis.
 
-%Example for expansion from a given axis:
-%|  <-|   |->  |
-%|  <-|   |->  |
-%|  <-|   |->  |
+Example for expansion from a given axis:
+|  <-|   |->  |
+|  <-|   |->  |
+|  <-|   |->  |
 
-%Input:
-%StaticPntCld - Point cloud in format of [x,y,z] (mx3) OR pointCloud
-%object with similar .Location value
-%CP.v - see notes below
-%OR pointCloud object with similar.Location value
-%RBounds - [Minimal radius,Maximal radius] to add to a point in MovPntCld
-%Xcenter - [x,y,z] mx3 point in 3D space. for spherical mehthod it
-%is the point from which radial expansion happens about. for cylinderical
-%method Xcenter(1,2) is the [x,y] coordante where the centeral axis passes
-%through and expansion happens about
+Input:
+StaticPntCld - Point cloud in format of [x,y,z] (mx3) OR pointCloud
+object with similar .Location value
+CP.v - see notes below
+OR pointCloud object with similar.Location value
+RBounds - [Minimal radius,Maximal radius] to add to a point in MovPntCld
+Xcenter - [x,y,z] mx3 point in 3D space. for spherical mehthod it
+is the point from which radial expansion happens about. for cylinderical
+method Xcenter(1,2) is the [x,y] coordante where the centeral axis passes
+through and expansion happens about
 
-%Varargin inputs:
-%DiffMinChange/DiffMaxChange - double, scalar. min/max change in radial
-%values of points
-%MaxIterations - integer,scalar.
-%Display - 'none'/'iter/'final'. displays data in fmincon. see fmincon
-%options for more
+Varargin inputs:
+DiffMinChange/DiffMaxChange - double, scalar. min/max change in radial
+values of points
+MaxIterations - integer,scalar.
+Display - 'none'/'iter/'final'. displays data in fmincon. see fmincon
+options for more
 
-%Output:
-%CP - updated, optimized CP
+Output:
+CP - updated, optimized CP
+%}
 
 %varargin input and their defaults
 DeltaR=Rbounds(2)-Rbounds(1);
@@ -765,23 +716,25 @@ end
 %% extra functions (note: can't call one method from another)
 %read stl
 function varargout=stlread(file)
-%Works only with binary STLS
-%imported from https://www.mathworks.com/matlabcentral/fileexchange/22409-stl-file-reader
-%slightly edited to remove ASCII parts which did not work
-%anyhow
+%{
+Works only with binary STLS
+imported from https://www.mathworks.com/matlabcentral/fileexchange/22409-stl-file-reader
+slightly edited to remove ASCII parts which did not work
+anyhow
 
-% STLREAD imports geometry from an STL file into MATLAB.
-%    FV = STLREAD(FILENAME) imports triangular faces from the ASCII or binary
-%    STL file idicated by FILENAME, and returns the patch struct FV, with fields
-%    'faces' and 'vertices'.
-%
-%    [F,V] = STLREAD(FILENAME) returns the faces F and vertices V separately.
-%
-%    [F,V,N] = STLREAD(FILENAME) also returns the face normal vectors.
-%
-%    The faces and vertices are arranged in the format used by the PATCH plot
-%    object.
-% Copyright 2011 The MathWorks, Inc.
+STLREAD imports geometry from an STL file into MATLAB.
+   FV = STLREAD(FILENAME) imports triangular faces from the ASCII or binary
+   STL file idicated by FILENAME, and returns the patch struct FV, with fields
+   'faces' and 'vertices'.
+
+   [F,V] = STLREAD(FILENAME) returns the faces F and vertices V separately.
+
+   [F,V,N] = STLREAD(FILENAME) also returns the face normal vectors.
+
+   The faces and vertices are arranged in the format used by the PATCH plot
+   object.
+Copyright 2011 The MathWorks, Inc.
+%}
 if ~exist(file,'file')
     error(['File ''%s'' not found. If the file is not on MATLAB''s path' ...
         ', be sure to specify the full path to the file.'], file);
@@ -869,55 +822,57 @@ end
 end %for stlread
 %fit circle to find BoundingCylinder R
 function [z,r,residual]=fitcircle(x,varargin)
-% Obtained from "fitcircle.m" from mathworks file exchange
-% https://www.mathworks.com/matlabcentral/fileexchange/15060-fitcircle-m
+%{
+Obtained from "fitcircle.m" from mathworks file exchange
+https://www.mathworks.com/matlabcentral/fileexchange/15060-fitcircle-m
 
-%FITCIRCLE    least squares circle fit
-%
-%   [Z, R] = FITCIRCLE(X) fits a circle to the N points in X minimising
-%   geometric error (sum of squared distances from the points to the fitted
-%   circle) using nonlinear least squares (Gauss Newton)
-%       Input
-%           X : 2xN array of N 2D points, with N >= 3
-%       Output
-%           Z : center of the fitted circle
-%           R : radius of the fitted circle
-%
-%   [Z, R] = FITCIRCLE(X, 'linear') fits a circle using linear least
-%   squares minimising the algebraic error (residual from fitting system
-%   of the form ax'x + b'x + c = 0)
-%
-%   [Z, R] = FITCIRCLE(X, Property, Value, ...) allows parameters to be
-%   passed to the internal Gauss Newton method. Property names can be
-%   supplied as any unambiguous contraction of the property name and are
-%   case insensitive, e.g. FITCIRCLE(X, 't', 1e-4) is equivalent to
-%   FITCIRCLE(X, 'tol', 1e-4). Valid properties are:
-%
-%       Property:                 Value:
-%       --------------------------------
-%       maxits                    positive integer, default 100
-%           Sets the maximum number of iterations of the Gauss Newton
-%           method
-%
-%       tol                       positive constant, default 1e-5
-%           Gauss Newton converges when the relative change in the solution
-%           is less than tol
-%
-%   [X, R, RES] = fitcircle(...) returns the 2 norm of the residual from
-%   the least squares fit
-%
-%   Example:
-%       x = [1 2 5 7 9 3; 7 6 8 7 5 7];
-%       % Get linear least squares fit
-%       [zl, rl] = fitcircle(x, 'linear')
-%       % Get true best fit
-%       [z, r] = fitcircle(x)
-%
-%   Reference: "Least-squares fitting of circles and ellipses", W. Gander,
-%   G. Golub, R. Strebel - BIT Numerical Mathematics, 1994, Springer
+FITCIRCLE    least squares circle fit
 
-% This implementation copyright Richard Brown, 2007, but is freely
-% available to copy, use, or modify as long as this line is maintained
+  [Z, R] = FITCIRCLE(X) fits a circle to the N points in X minimising
+  geometric error (sum of squared distances from the points to the fitted
+  circle) using nonlinear least squares (Gauss Newton)
+      Input
+          X : 2xN array of N 2D points, with N >= 3
+      Output
+          Z : center of the fitted circle
+          R : radius of the fitted circle
+
+  [Z, R] = FITCIRCLE(X, 'linear') fits a circle using linear least
+  squares minimising the algebraic error (residual from fitting system
+  of the form ax'x + b'x + c = 0)
+
+  [Z, R] = FITCIRCLE(X, Property, Value, ...) allows parameters to be
+  passed to the internal Gauss Newton method. Property names can be
+  supplied as any unambiguous contraction of the property name and are
+  case insensitive, e.g. FITCIRCLE(X, 't', 1e-4) is equivalent to
+  FITCIRCLE(X, 'tol', 1e-4). Valid properties are:
+
+      Property:                 Value:
+      --------------------------------
+      maxits                    positive integer, default 100
+          Sets the maximum number of iterations of the Gauss Newton
+          method
+
+      tol                       positive constant, default 1e-5
+          Gauss Newton converges when the relative change in the solution
+          is less than tol
+
+  [X, R, RES] = fitcircle(...) returns the 2 norm of the residual from
+  the least squares fit
+
+  Example:
+      x = [1 2 5 7 9 3; 7 6 8 7 5 7];
+      % Get linear least squares fit
+      [zl, rl] = fitcircle(x, 'linear')
+      % Get true best fit
+      [z, r] = fitcircle(x)
+
+  Reference: "Least-squares fitting of circles and ellipses", W. Gander,
+  G. Golub, R. Strebel - BIT Numerical Mathematics, 1994, Springer
+
+This implementation copyright Richard Brown, 2007, but is freely
+available to copy, use, or modify as long as this line is maintained
+%}
 
 error(nargchk(1, 5, nargin, 'struct'))
 
@@ -1104,6 +1059,7 @@ end % switch length(varargin)
 end %parseinputs %for fitcircle
 %% functions not in use - ideas not implemented
 function [P,Q]=BezBellCurve(R,d,L,Nq)
+%{
 %Builds a 2D bezier curve and evalutes Nq points on it
 %(eqidistance on parameter q in [0,1])
 
@@ -1141,6 +1097,7 @@ function [P,Q]=BezBellCurve(R,d,L,Nq)
 % scatter(P(:,1),P(:,2),5,'b');
 % scatter(Q(:,1),Q(:,2),10,'r');
 % %NOTE: d=R, d=0 and d=L are the three interesting cases
+%}
 
 %build nodes and parameter vector
 Q=[R,0;
@@ -1175,6 +1132,7 @@ end
 
 end
 function [xyz,Psi,Theta]=CalcSphere(R,Npsi,Ntheta,varargin)
+%{
 %INPUT:
 %R - raidus
 %Ntheta - amount of theta points (descrization). theta ranges [0,2pi]
@@ -1189,6 +1147,7 @@ function [xyz,Psi,Theta]=CalcSphere(R,Npsi,Ntheta,varargin)
 %OUTPUT:
 %xyz - size Npsi x Ntheta x 3 where the depth dimension is constructed as [x,y,z]
 %Theta, Psi. matrices of size Ntheta x Npsi
+%}
 
 %default values:
 Half=false; Edges=true;
@@ -1229,6 +1188,7 @@ end
 xyz=cat(3,X,Y,Z);
 end
 function [xyz,Z,Theta]=CalcCylinder(R,L,Nz,Ntheta,varargin)
+%{
 %INPUT:
 %R - raidus
 %Ntheta - amount of theta points (descrization). theta ranges [0,2pi]
@@ -1240,6 +1200,7 @@ function [xyz,Z,Theta]=CalcCylinder(R,L,Nz,Ntheta,varargin)
 %OUTPUT:
 %xyz - size Nz x Ntheta x 3 where the depth dimension is constructed as [x,y,z]
 %Theta, Z. matrices of size Ntheta x Nz
+%}
 
 %Obtain inputs
 for ind=1:2:length(varargin)
@@ -1268,6 +1229,7 @@ end
 xyz=cat(3,X,Y,Z);
 end
 function r=FindSphereRadius(xyz)
+%{
 %Assumption:
 %xyz "spherical" half dome point cloud is centered around the origin facing
 %up
@@ -1283,6 +1245,7 @@ function r=FindSphereRadius(xyz)
 
 %Output:
 %r - radius of fitted sphere
+%}
 zy=xyz(:,[2,3]);
 zyhull=zy(convhull(zy),:);
 [~,rzy]=fitcircle(zyhull,'linear');
@@ -1294,6 +1257,7 @@ zxhull=zy(convhull(zx),:);
 r=mean([rzx,rzy]);
 end
 function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Rbounds,Xcenter,varargin)
+%{
 %Blow up MovPntCld to StaticPntCld using fmincon (optimization) on
 %Hausdorff distance to register MovPntCld onto StaticPntCld.
 %Algorithm works in two steps:
@@ -1337,6 +1301,7 @@ function BlownPntCld=RadialNonRigidRegistration(Method,MovPntCld,StaticPntCld,Rb
 %Output:
 %BlownPntCld - point cloud size format as MovPntCld(input). class may vary
 %depending on Varargin input Outputclass choice.
+%}
 
 %varargin input and their defaults
 DeltaR=Rbounds(2)-Rbounds(1);
