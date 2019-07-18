@@ -61,21 +61,26 @@ classdef Bez4Stmp
                         case '.stl'
                             [~,xyz]=stlread(FileFullName); %obtain vertices of STL
                         case '.mat'
-                            s=whos;
-                            doubleClassMatches= strcmp({s.class},'double');
-                            pointCloudClassMatches= strcmp({s.class},'pointCloud');
-                            NameMatches=strcmp({s.name},FileName);
-                            if any((doubleClassMatches | pointCloudClassMatches) & NameMatches)
-                                eval(['xyz=',s(NameMatches).name,';']);
-                            elseif any(pointCloudClassMatches) %take the first pointCloud class variable in list
-                                vars={s(pointCloudClassMatches).name};
-                                eval(['xyz=',vars{1},';']);
-                            elseif any(doubleClassMatches) %take the first double class variable in list
-                                vars={s(doubleClassMatches).name};
-                                eval(['xyz=',vars{1},';']);
-                            end 
-                            %convert input to double matrix incase its pointCloud
-                            if isa(xyz,'pointCloud'), xyz=xyz.Location; end
+                            S=load(FileFullName); %S is a struct with fieldnames being the names of the variables in mat
+                            NameMatches=strcmp(fieldnames(S),FileName); %logical array
+                            cellS=struct2cell(S); %cell array containig struct fields (loses field names)
+                            doubleClassMatches=cellfun(@(s) isa(s,'double'),cellS); %logical array
+                            pointCloudClassMatches=cellfun(@(s) isa(s,'pointCloud'),cellS); %logical array
+                            if any(NameMatches) %check for a name match (maximum 1 possible)
+                                var=cellS{NameMatches};
+                                switch class(var)
+                                    case 'pointCloud'
+                                        xyz=var.Location;
+                                    case 'double'
+                                        xyz=var;
+                                end
+                                %if no variable with file name exists, take first variable by
+                                %preference: Bez4Stmp>pointCloud>double
+                            elseif any(pointCloudClassMatches) %pointCloud
+                                xyz=cellS{pointCloudClassMatches(1)}.Location;
+                            elseif any(doubleClassMatches) %double
+                                xyz=cellS{doubleClassMatches(1)};
+                            end %end .m related if-elseif
                     end
                 case 'pointCloud' %incase user went ahead and created a point cloud object
                     xyz=PntCldIn.Location;
@@ -116,6 +121,8 @@ classdef Bez4Stmp
                         obj.BezierOrder=varargin{ind+1};
                     case 'XcenterCalculationMethod'
                         obj.XcenterCalculationMethod=varargin{ind+1};
+                    otherwise
+                        error('no such name-value pair exists');
                 end
             end
             
@@ -210,28 +217,20 @@ classdef Bez4Stmp
                         MaxOptimizationIterions=varargin{ind+1};
                     case 'display'
                         OptDisplay=varargin{ind+1};
+                    otherwise
+                        error('no such name-value pair exists');
                 end
             end
             %% Run
             if Time, tic; end %start counting time of process
             
-            %introduce to parameters before any preprocessing to object
-            obj.Scan=pointCloud(xyz);
-            %align with z axis, sets base on z=0, sort vertices by z value
-            T2Z_xyz=Transform2Z(xyz);
-            %find Radius and Length of bounding Cylinder
-            [R,L]=BoundingCylinder(T2Z_xyz);
-            obj.BoundingCylinderLength=L; %introduce to parameters
-            obj.BoundingCylinderRadius=R; %introduce to parameters
-            
-            %Create pointCloud object and introduce to parameters
-            PntCld=pointCloud(T2Z_xyz); %create point cloud object from preprocessed point cloud
-            obj.T2ZScan=PntCld; %introduce to parameters
+            L=obj.BoundingCylinderLength;
+            R=obj.BoundingCylinderRadius;
             
             %DownSample - final part of preprocessing - and introduce to
             %parameters
             GridLength=obj.GridLengthFcn(R,L); %obtain voxel edge length by default function
-            PntCld=pcdownsample(PntCld,'gridAverage',GridLength); %Downsample by grid legnth
+            PntCld=pcdownsample(obj.T2ZScan,'gridAverage',GridLength); %Downsample by grid legnth
             obj.PointCloud=PntCld; %introduce to parameters
             
             %Find Xcenter - point seperating between sphereical and
@@ -296,6 +295,8 @@ classdef Bez4Stmp
                         Ax=varargin{ind+1};
                     case 'zthreshold'
                         zThreshold=varargin{ind+1};
+                    otherwise
+                        error('no such name-value pair exists');
                 end
             end
             
@@ -446,6 +447,8 @@ for ind=1:2:length(varargin)
             R=varargin{ind+1};
         case 'Threshold'
             Threshold=varargin{ind+1};
+        otherwise
+            error('no such name-value pair exists');
     end
 end
 
@@ -558,6 +561,8 @@ for ind=1:2:length(varargin)
             RemoveButtomEdge=varargin{ind+1};
         case 'removetopedge'
             RemoveTopEdge=varargin{ind+1};
+        otherwise
+            error('no such name-value pair exists');
     end
 end
 
@@ -659,6 +664,8 @@ for ind=1:2:length(varargin)
             MaxIterations=varargin{ind+1};
         case 'display'
             Display=varargin{ind+1};
+        otherwise
+            error('no such name-value pair exists');
     end
 end
 
@@ -1161,6 +1168,8 @@ for ind=1:2:length(varargin)
             Half=varargin{ind+1};
         case 'edges'
             Edges=varargin{ind+1};
+        otherwise
+            error('no such name-value pair exists');
     end
 end
 
@@ -1208,6 +1217,8 @@ for ind=1:2:length(varargin)
     switch comm
         case 'trans'
             Trans=varargin{ind+1};
+        otherwise
+            error('no such name-value pair exists');
     end
 end
 
@@ -1347,6 +1358,8 @@ switch lower(Method)
     case 'cylinderical'
         xy=MovPntCld(:,[1,2]);
         t=[xy-Xcenter(1:2),zeros(m,1)]./vecnorm(xy-Xcenter(1:2),2,2);
+    otherwise
+        error('no such name-value pair exists');
 end
 
 fun=@(r) CostFcn(MovPntCld,StaticPntCld,t,r);

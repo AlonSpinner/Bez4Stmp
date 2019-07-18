@@ -1,8 +1,8 @@
 %{
 Written by Alon Spinner @ 6-7/19
-handles.GUIstruct contain
--Scan: mx3 double point cloud
--Stmp: Bez4Stmp class object 
+handles.GUIstruct is a struct with fieldnames
+-Scan: mx3 of class double describing a point cloud
+-Stmp: Bez4Stmp class object
 %}
 
 function varargout = Bez4StmpGUI(varargin)
@@ -68,7 +68,7 @@ Ax=BezCP.CreateDrawingAxes(Ax);
 %Create BezCP to draw with
 PtchAmnt=16;
 Layers=sqrt(PtchAmnt);
-BezO=3; 
+BezO=3;
 N=Layers*BezO+1;
 [X,Y,Z]=peaks(N);
 X=X*3; Y=Y*3; %scale
@@ -97,6 +97,7 @@ function varargout = Bez4StmpGUI_OutputFcn(hObject, eventdata, handles)
 
 varargout{1} = handles.output;
 %% Callbacks
+%action related
 function FileVarNameEdit_Callback(hObject, eventdata, handles)
 %cancel all actions but load (turn pushbuttons dark)
 DarkGreen=[0.31,0.49,0.37]; DarkBlue=[0.4,0.58,0.62];
@@ -135,70 +136,58 @@ switch str
             case '.stl'
                 [~,Scan]=stlread(FileFullName); %obtain vertices of STL
             case '.mat'
-                load(FileFullName); %loads to function workspace
-                %search function workspace variables by creteria
-                s=whos;
-                Bez4StmpClassMatches= strcmp({s.class},'Bez4Stmp');
-                doubleClassMatches= strcmp({s.class},'double');
-                pointCloudClassMatches= strcmp({s.class},'pointCloud');
-                NameMatches=strcmp({s.name},FileName);
-                switch true
-                    case any(Bez4StmpClassMatches) %if Bez4Stmp class exists in variables, give it preference
-                        if any(Bez4StmpClassMatches & NameMatches) %if Bez4Stmp class variable exists with provided FileName. take it
-                            eval(['Stmp=',s(NameMatches).name,';']);
-                        else %take the first Bez4Stmp class variable in list
-                            vars={s(Bez4StmpClassMatches).name};
-                            eval(['Stmp=',vars{1},';']);
-                        end
-                        Scan=Stmp.Scan;                   
-                    case ~any(Bez4StmpClassMatches) & (any(doubleClassMatches) | any(pointCloudClassMatches))
-                        %if pointCloud or double class variable exists with provided FileName. take it
-                        if any((doubleClassMatches | pointCloudClassMatches) & NameMatches)
-                            eval(['Scan=',s(NameMatches).name,';']);
-                        elseif any(pointCloudClassMatches) %take the first pointCloud class variable in list
-                            vars={s(pointCloudClassMatches).name};
-                            eval(['Scan=',vars{1},';']);
-                        elseif any(doubleClassMatches) %take the first double class variable in list
-                            vars={s(doubleClassMatches).name};
-                            eval(['Scan=',vars{1},';']);
-                        end
-                        %convert input to pointCloud incase its double and check
-                        %it's size
-                        if isa(Scan,'pointCloud'), Scan=pointCloud.Location; end
-                        sz=size(Scan);
-                        if numel(sz)~=2 || sz(2)~=3
-                            error('Input pointCloud.Location or double matrix must have size mx3');
-                        end
-                end %end .m related switch-case               
-            otherwise %.m file contains no good data
-                error(sprintf(['Wrong Input\n',...
-                    'Input file must be a .m or .stl one\n',...
-                    '.m files will contain a Bez4Stmp, double or pointCloud class object.\n',...
-                    'It is recommended the the variable name have the same name as the .m file']));
+                S=load(FileFullName); %S is a struct with fieldnames being the names of the variables in mat
+                NameMatches=strcmp(fieldnames(S),FileName); %logical array
+                cellS=struct2cell(S); %cell array containig struct fields (loses field names)
+                Bez4StmpClassMatches=cellfun(@(s) isa(s,'Bez4Stmp'),cellS); %logical array
+                doubleClassMatches=cellfun(@(s) isa(s,'double'),cellS); %logical array
+                pointCloudClassMatches=cellfun(@(s) isa(s,'pointCloud'),cellS); %logical array
+                if any(NameMatches) %check for a name match (maximum 1 possible)
+                    var=cellS{NameMatches};
+                    switch class(var)
+                        case 'Bez4Stmp'
+                            Stmp=var;
+                            Scan=Stmp.Scan.Location;
+                        case 'pointCloud'
+                            Scan=var.Location;
+                        case 'double'
+                            Scan=var;
+                    end
+                    %if no variable with file name exists, take first variable by
+                    %preference: Bez4Stmp>pointCloud>double
+                elseif any(Bez4StmpClassMatches) %Bez4Stmp
+                    Stmp=cellS{Bez4StmpClassMatches(1)};
+                    Scan=Stmp.Scan;
+                elseif any(pointCloudClassMatches) %pointCloud
+                    Scan=cellS{pointCloudClassMatches(1)}.Location;
+                elseif any(doubleClassMatches) %double
+                    Scan=cellS{doubleClassMatches(1)};
+                else %.m file contains no good data
+                    error(sprintf(['Wrong Input\n',...
+                        'Input file must be a .m or .stl one\n',...
+                        '.m files will contain a Bez4Stmp, double or pointCloud class object.\n',...
+                        'It is recommended the the variable name have the same name as the .m file']));
+                end %end .m related if-elseif
         end %end .ext related switch-case
     case 'Workspace variable'
         VarName=handles.FileVarNameEdit.String;
         Var=evalin('base',VarName);
         switch class(Var)
             case 'pointCloud'
-                Scan=Var;
                 Scan=pointCloud.Location;
-                %check input
-                sz=size(Scan);
-                if numel(sz)~=2 || sz(2)~=3
-                    error('Input pointCloud.Location or double matrix must have size mx3');
-                end
             case 'double'
                 Scan=Var;
-                sz=size(Scan);
-                if numel(sz)~=2 || sz(2)~=3
-                    error('Input pointCloud.Location or double matrix must have size mx3');
-                end
             case 'Bez4Stmp'
                 Stmp=Var;
-                Scan=Stmp.Scan;
-        end  %class(var) ~belong to workspace variable option     
-end %switch between workspace variable / file 
+                Scan=Stmp.Scan.Location;
+        end
+end %switch between workspace variable / file
+
+%do some further input checking for pointCloud/double inputs
+sz=size(Scan);
+if numel(sz)~=2 || sz(2)~=3
+    error('Input pointCloud.Location or double matrix must have size mx3');
+end
 
 %enable/disable specific actions (if color is DarkGreen/DarkBlue buttons are disabled and otherwise)
 %update GUIstruct Scan and Stmp (if Bez4Stmp was loaded)
@@ -229,6 +218,12 @@ end
 guidata(hObject, handles); %save handles in figure
 ScanPointCloudPush_Callback(handles.ScanPointCloudPush,[],handles)%Draw InputPointCloud
 function CalculatePush_Callback(hObject, eventdata, handles)
+DarkBlue=[0.4,0.58,0.62];
+if norm(hObject.BackgroundColor-DarkBlue)<0.01
+    errordlg('Please load data prior');
+    return
+end
+
 handles=guidata(hObject); %Obtain updated handles
 
 %Obtain data from Edit
@@ -247,7 +242,7 @@ Stmp=Bez4Stmp(Scan,'Cap',Cap,'SphLayers',SphLayers,'CylLayers',CylLayers,...
 %alert user of succsessful load and enable actions by changing pushbuttons
 %color
 helpdlg('Calculation process has been completed');
-LightGreen=[0.43,0.8,0.55]; LightBlue=[0.53,0.8,0.86]; 
+LightGreen=[0.43,0.8,0.55]; LightBlue=[0.53,0.8,0.86];
 handles.BezierSurfaceMeshPlotPush.BackgroundColor=LightGreen;
 handles.HausdorffPlotPush.BackgroundColor=LightGreen;
 handles.ExportPush.BackgroundColor=LightBlue;
@@ -256,12 +251,24 @@ handles.SaveWorkspacePush.BackgroundColor=LightBlue;
 handles.GUIstruct.Stmp=Stmp; %save to GUI struct
 guidata(hObject, handles); %save handles in figure
 function SaveWorkspacePush_Callback(hObject, eventdata, handles)
+DarkBlue=[0.4,0.58,0.62];
+if norm(hObject.BackgroundColor-DarkBlue)<0.01
+    errordlg('Please calculate data prior');
+    return
+end
+
 handles=guidata(hObject); %Obtain updated handles
 Stmp=handles.GUIstruct.Stmp;
-Uinput=inputdlg('Please enter variable name','',1,{'MyStump'}); 
+Uinput=inputdlg('Please enter variable name','',1,{'MyStump'});
 StmpName=Uinput{1};
 assignin('base',StmpName,Stmp);
 function ExportPush_Callback(hObject, eventdata, handles)
+DarkBlue=[0.4,0.58,0.62];
+if norm(hObject.BackgroundColor-DarkBlue)<0.01
+    errordlg('Please calculate data prior');
+    return
+end
+
 handles=guidata(hObject); %Obtain updated handles
 Stmp=handles.GUIstruct.Stmp;
 filter={'*.igs';'*.mat'};
@@ -279,7 +286,7 @@ helpdlg(sprintf('%s file saved succesfully',ext));
 %plotting callbacks
 function HausdorffPlotPush_Callback(hObject, eventdata, handles)
 DarkGreen=[0.31,0.49,0.37];
-if norm(hObject.BackgroundColor-DarkGreen)<eps
+if norm(hObject.BackgroundColor-DarkGreen)<0.01
     errordlg('Please calculate data prior');
     return
 end
@@ -301,7 +308,7 @@ Stmp.HausdorffAsses('Ax',Ax,'zthreshold',Zfilter);
 rotate3d(Ax, 'off');
 function BezierSurfaceMeshPlotPush_Callback(hObject, eventdata, handles)
 DarkGreen=[0.31,0.49,0.37];
-if norm(hObject.BackgroundColor-DarkGreen)<eps
+if norm(hObject.BackgroundColor-DarkGreen)<0.01
     errordlg('Please calculate data prior');
     return
 end
@@ -318,7 +325,7 @@ Ax=BezCP.CreateDrawingAxes(Ax);
 Stmp.StmpBezCP.DrawBezierPatches('Ax',Ax);
 function ScanPointCloudPush_Callback(hObject, eventdata, handles)
 DarkGreen=[0.31,0.49,0.37];
-if norm(hObject.BackgroundColor-DarkGreen)<eps
+if norm(hObject.BackgroundColor-DarkGreen)<0.01
     errordlg('Please calculate data prior');
     return
 end

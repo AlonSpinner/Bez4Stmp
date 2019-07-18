@@ -284,6 +284,8 @@ classdef BezCP
                         if j==Slices, R=Ip(i,1); else, R=0; end  %return 0 if no patch to the right
                         C(k,:)=[L,R,U,D];
                     end
+                otherwise
+                        error('no such method exists');
             end
             
             %Introduce to object
@@ -336,6 +338,8 @@ classdef BezCP
                         FaceAlpha=varargin{ind+1};
                     case 'edgecolor'
                         EdgeColor=varargin{ind+1};
+                    otherwise
+                        error('no such name-value pair exists');
                 end
             end
             
@@ -434,6 +438,8 @@ classdef BezCP
                         Msize=varargin{ind+1};
                     case 'linewidth'
                         LineWidth=varargin{ind+1};
+                    otherwise
+                        error('no such name-value pair exists');
                 end
             end
             
@@ -717,6 +723,8 @@ classdef BezCP
                         Msize=varargin{ind+1};
                     case 'title'
                         Title=varargin{ind+1};
+                    otherwise
+                        error('no such name-value pair exists');
                 end
             end
             
