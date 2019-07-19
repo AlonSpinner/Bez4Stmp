@@ -45,42 +45,22 @@ Stmp=Stmp.UpdateObj;
 
 %% Draw Patches
 fig=figure('color',[0,0,0]);
-Ax=Stmp.CreateDrawingAxes(fig);
+Ax=BezCP.CreateDrawingAxes(fig);
 
 pausetime=0;
-% Stmp.CP.DrawBezierPatches('pausetime',pausetime);
-Stmp.PsuedoInverseCP.DrawBezierPatches('Ax',Ax,'pausetime',pausetime);
-% Stmp.PsuedoInverseCP.DrawControlPoints('Ax',Ax,'pausetime',pausetime);
-% Stmp.PsuedoInverseCP.DrawBezierPatches('curvature','gaussian','PauseTime',0);
+% Stmp.RegisteredBezCP.DrawBezierPatches('pausetime',pausetime);
+Stmp.StmpBezCP.DrawBezierPatches('Ax',Ax,'pausetime',pausetime);
+Stmp.StmpBezCP.DrawControlPoints('Ax',Ax,'pausetime',pausetime);
 
 %% Draw point clouds - orginial, compact and surfaces
-fig=figure('color',[0,0,0]);
-Ax=Stmp.CreateDrawingAxes(fig);
-Stmp.DrawPointCloud(Stmp.PointCloud,'color',[1,0,0],'msize',20,'Ax',Ax); %original
-Stmp.DrawPointCloud(Stmp.Compact,'color',[0,0,1],'msize',20,'Ax',Ax); %compact
-Stmp.DrawPointCloud(Stmp.PsuedoInverseCP.CombinePatches(30),'color',[1,1,1],'Ax',Ax); %compact
-Stmp.DrawPointCloud(Stmp.PsuedoInverseCP.Vertices,'color',[0,1,0],'Ax',Ax,'msize',20); %CP vertices
-
+Ax=BezCP.CreateDrawingAxes;
+H1=BezCP.DrawPointCloud(Stmp.PointCloud,'color',[1,0,0],'msize',20,'Ax',Ax); %original
+H2=BezCP.DrawPointCloud(Stmp.Compact,'color',[0,0,1],'msize',20,'Ax',Ax); %compact
+H3=BezCP.DrawPointCloud(Stmp.StmpBezCP.Patches2PointCloud(30),'color',[1,1,1],'Ax',Ax); %compact
+H4=BezCP.DrawPointCloud(Stmp.StmpBezCP.Vertices,'color',[0,1,0],'Ax',Ax,'msize',20); %CP vertices
+lgnd=legend(Ax,'\color{white}Scan','\color{white}compact',...
+    '\color{white}bezier surface mesh','\color{white}control points');
+set(lgnd,'color',0.2*[1,1,1]);
 %% Hausdorff distance with plot
-P=Stmp.PointCloud.Location;
-Q=Stmp.PsuedoInverseCP.CombinePatches(30);
-szP=size(P); szQ=size(Q);
-if numel(szP)==3, P=reshape(P,szP(1)*szP(2),3); end
-if numel(szQ)==3, Q=reshape(Q,szQ(1)*szQ(2),3); end
-Threshold=30;
-P=P(P(:,3)>Threshold,:); Q=Q(Q(:,3)>Threshold,:); %filter buttom noise
-[hd,pInd,qInd]=Stmp.Hausdorff(P,Q); %<----------hausdorff distance
-Phd=P(pInd,:); Qhd=Q(qInd,:);
-%calculate radial distance (radial off mean point of Phd and Qhd)
-m=mean([Phd;Qhd]);
-Xcntr=Stmp.Xcenter;
-if m(3)>Xcntr(3), t=(m-Xcntr)/norm(m-Xcntr,2);
-else, t=[(m(1:2)-Xcntr(1:2)),0]/norm(m(1:2)-Xcntr(1:2),2); end
-rhd=abs(dot(Phd-Qhd,t));
-%plot
-fig=figure('color',[0,0,0]);
-Ax=Stmp.CreateDrawingAxes(fig);
-Stmp.DrawPointCloud(Stmp.PointCloud,'color',[0,0,1],'msize',15,'Ax',Ax); %original
-Stmp.DrawPointCloud(Stmp.PsuedoInverseCP.CombinePatches(30),'color',[1,1,1],'Ax',Ax); %compact
-Stmp.DrawPointCloud([Phd;Qhd],'color',[1,0,0],'msize',20,'Ax',Ax,...
-    'title',sprintf('Hausdorff distance %.2g with Radial displacement of %.2g',hd,rhd)); %compact
+Ax=BezCP.CreateDrawingAxes;
+Stmp.HausdorffAsses('Ax',Ax)

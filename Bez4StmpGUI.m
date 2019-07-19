@@ -4,7 +4,6 @@ handles.GUIstruct is a struct with fieldnames
 -Scan: mx3 of class double describing a point cloud
 -Stmp: Bez4Stmp class object
 %}
-
 function varargout = Bez4StmpGUI(varargin)
 % Bez4StmpGUI MATLAB code for Bez4StmpGUI.fig
 %      Bez4StmpGUI, by itself, creates a new Bez4StmpGUI or raises the existing
@@ -29,7 +28,7 @@ function varargout = Bez4StmpGUI(varargin)
 
 % Edit the above text to modify the response to help Bez4StmpGUI
 
-% Last Modified by GUIDE v2.5 17-Jul-2019 23:13:46
+% Last Modified by GUIDE v2.5 18-Jul-2019 18:51:15
 
 % Begin initialization code - DO NOT EDIT
 gui_Singleton = 1;
@@ -200,6 +199,7 @@ if exist('Stmp','var') %if variable "Stmp" was created (Bez4Stmp input)
     handles.ScanPointCloudPush.BackgroundColor=LightGreen;
     handles.BezierSurfaceMeshPlotPush.BackgroundColor=LightGreen;
     handles.HausdorffPlotPush.BackgroundColor=LightGreen;
+    handles.CurvaturePlotPush.BackgroundColor=LightGreen;
     handles.CalculatePush.BackgroundColor=LightBlue;
     handles.ExportPush.BackgroundColor=LightBlue;
     handles.SaveWorkspacePush.BackgroundColor=LightBlue;
@@ -211,6 +211,7 @@ else %if variable "Stmp" wasnt created (double or pointCloud input)
     
     handles.BezierSurfaceMeshPlotPush.BackgroundColor=DarkGreen;
     handles.HausdorffPlotPush.BackgroundColor=DarkGreen;
+    handles.CurvaturePlotPush.BackgroundColor=DarkGreen;
     handles.ExportPush.BackgroundColor=DarkBlue;
     handles.SaveWorkspacePush.BackgroundColor=DarkBlue;
 end
@@ -245,6 +246,7 @@ helpdlg('Calculation process has been completed');
 LightGreen=[0.43,0.8,0.55]; LightBlue=[0.53,0.8,0.86];
 handles.BezierSurfaceMeshPlotPush.BackgroundColor=LightGreen;
 handles.HausdorffPlotPush.BackgroundColor=LightGreen;
+handles.CurvaturePlotPush.BackgroundColor=LightGreen;
 handles.ExportPush.BackgroundColor=LightBlue;
 handles.SaveWorkspacePush.BackgroundColor=LightBlue;
 
@@ -344,6 +346,27 @@ BezCP.DrawPointCloud(Scan,'Ax',Ax);
 %turn rotation off. For some reason "pcshow" function (called in
 %"BezCP.DrawPointCloud" turns rotate3d on for axes instilled in guide GUI.
 rotate3d(Ax, 'off');
+function CurvaturePlotPush_Callback(hObject, eventdata, handles)
+DarkGreen=[0.31,0.49,0.37];
+if norm(hObject.BackgroundColor-DarkGreen)<0.01
+    errordlg('Please calculate data prior');
+    return
+end
+
+handles=guidata(hObject); %Obtain updated handles
+Stmp=handles.GUIstruct.Stmp;
+
+%restablish Ax to draw on
+Ax=handles.Ax;
+cla(Ax,'reset');
+Ax=BezCP.CreateDrawingAxes(Ax);
+colormap(Ax,'jet');k
+colorbar(Ax);
+
+%Draw. Currently discrete gives better results for some reason
+Type=handles.CurvaturePopUp.String{handles.CurvaturePopUp.Value};
+Stmp.StmpBezCP.DrawMeshCurvature('Type',Type,'Ax',Ax,'Technique','Discrete');
+
 %info callbacks
 function DocumentationPush_Callback(hObject, eventdata, handles)
 %% Functions
@@ -507,6 +530,17 @@ function HausedorffZThresholdEdit_CreateFcn(hObject, eventdata, handles)
 % handles    empty - handles not created until after all CreateFcns called
 
 % Hint: edit controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+function CurvaturePopUp_Callback(hObject, eventdata, handles)
+function CurvaturePopUp_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to CurvaturePopUp (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: popupmenu controls usually have a white background on Windows.
 %       See ISPC and COMPUTER.
 if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
     set(hObject,'BackgroundColor','white');

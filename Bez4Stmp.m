@@ -119,7 +119,7 @@ classdef Bez4Stmp
                         obj.Slices=varargin{ind+1};
                     case 'bezierorder'
                         obj.BezierOrder=varargin{ind+1};
-                    case 'XcenterCalculationMethod'
+                    case 'xcentercalculationmethod'
                         obj.XcenterCalculationMethod=varargin{ind+1};
                     otherwise
                         error('no such name-value pair exists');
@@ -303,7 +303,7 @@ classdef Bez4Stmp
             %find hausdroff distance and the points who make it
             P=obj.PointCloud.Location;
             P=P(P(:,3)>zThreshold,:); %filter out buttom noise
-            Q=obj.StmpBezCP.CombinePatches(N);
+            Q=obj.StmpBezCP.Patches2PointCloud(N);
             szQ=size(Q);
             Q=reshape(Q,szQ(1)*szQ(2),3); %reshape Q to mx3
             Q=Q(Q(:,3)>zThreshold,:); %filter buttom noise
@@ -321,7 +321,7 @@ classdef Bez4Stmp
             if exist('Ax','var') && isgraphics(Ax,'Axes')
                 Handles=gobjects(1,3);
                 Handles(1)=BezCP.DrawPointCloud(obj.PointCloud,'color',[0,0,1],'msize',15,'Ax',Ax); %original
-                Handles(2)=BezCP.DrawPointCloud(obj.StmpBezCP.CombinePatches(30),'color',[1,1,1],'Ax',Ax); %compact
+                Handles(2)=BezCP.DrawPointCloud(obj.StmpBezCP.Patches2PointCloud(30),'color',[1,1,1],'Ax',Ax); %compact
                 Handles(3)=BezCP.DrawPointCloud([Phd;Qhd],'color',[1,0,0],'msize',20,'Ax',Ax,...
                     'title',sprintf('Hausdorff distance %.2g with Radial displacement of %.2g',hd,rhd)); %compact
             end

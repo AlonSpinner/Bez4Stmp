@@ -1,6 +1,6 @@
 %Written by Alon Spinner @ 6-7/19
 classdef BezCP
-    %{    
+    %{
     Class creates a bezier surface mesh of three kinds (methods):
     block - mxn patch grid
     circular - MxN patch grid stiched togther at the sides
@@ -81,7 +81,7 @@ classdef BezCP
     %delete old figures
     close(h11,h12,h13);
     clear('Ax11','Ax12','Ax13');
-    %------------end of example------------- 
+    %------------end of example-------------
     %}
     properties (SetAccess = private)
         BezierOrder
@@ -285,7 +285,7 @@ classdef BezCP
                         C(k,:)=[L,R,U,D];
                     end
                 otherwise
-                        error('no such method exists');
+                    error('no such method exists');
             end
             
             %Introduce to object
@@ -300,7 +300,7 @@ classdef BezCP
             
             Varagin inputs:
             Ax - handle of axes. if none chosen will draw to gca
-            N - number of points drawn are N^2. by default N=30
+            N - number of points drawn per patch are N^2. by default N=30
             Curvature - 'gaussian'/'mean'/'none'. default set to 'none'
             Color - color of all patches. if not specified - will be by lines (matlab colormap).
             PauseTime - pause time between patch drawings (seconds).
@@ -313,7 +313,7 @@ classdef BezCP
             
             Outputs by varargout:
             varargout{1} = Handles - array of handles size(1,Patch Amount)
-            varargout{2} = Ax - returns the axes handle the surfaces were drew on     
+            varargout{2} = Ax - returns the axes handle the surfaces were drew on
             %}
             
             %default values
@@ -346,16 +346,10 @@ classdef BezCP
             %Check input validity and create color matrix if required (==if
             %drawing is NOT by curvature)
             PtchAmnt=size(obj.Patches,3);
-            if strcmpi(Curvature,'none')  %if Curvature wasnt provided or set to "none"
-                if ~exist('Color','var') || isempty(Color) %if color wasnt provided
-                    PtchColor=lines(PtchAmnt);
-                else
-                    PtchColor=repmat(Color,PtchAmnt,1); %if color was provided
-                end
-            else %if Curvature was provided and set to "gaussian"/"mean"
-                if exist('Color','var') %if color exists, return error
-                    error('Color can only be provided if curvature is set to "none"');
-                end
+            if ~exist('Color','var') || isempty(Color) %if color wasnt provided
+                PtchColor=lines(PtchAmnt);
+            else
+                PtchColor=repmat(Color,PtchAmnt,1); %if color was provided
             end
             
             %create axes if not given
@@ -377,25 +371,140 @@ classdef BezCP
                 Pcp=reshape(obj.Vertices(obj.Patches(:,:,k),:),[obj.BezierOrder+1,obj.BezierOrder+1,3]); %patch control points.
                 Psrfp=BezPtchCP2SrfP(Pcp,N); %compute surface points
                 x=Psrfp(:,:,1); y=Psrfp(:,:,2); z=Psrfp(:,:,3);
-                
                 %Draw evaluated points with surf command
                 %Note: switch coded in forloop to allow cool "build up" graphics when plotting
-                switch Curvature
-                    case 'none'
-                        Handles(k)=surf(Ax,x,y,z,...
-                            'facecolor',PtchColor(k,:),'edgecolor',EdgeColor,'facealpha',FaceAlpha,...
-                            'UserData',k);
-                    case 'gaussian'
-                        K=SurfCurvature(x,y,z);
-                        K=filloutliers(K,'nearest');
-                        Handles(k)=surf(Ax,x,y,z,K,'facecolor','interp','edgecolor',EdgeColor);
-                    case 'mean'
-                        [~,H]=SurfCurvature(x,y,z);
-                        H=filloutliers(H,'nearest');
-                        Handles(k)=surf(Ax,x,y,z,H,'facecolor','interp','edgecolor',EdgeColor);
-                end
+                Handles(k)=surf(Ax,x,y,z,...
+                    'facecolor',PtchColor(k,:),'edgecolor',EdgeColor,'facealpha',FaceAlpha,...
+                    'UserData',k);
                 pause(PauseTime);
             end
+            
+            %Create output
+            if nargout==0, varargout={};
+            else, varargout={Handles,Ax}; end
+        end
+        function varargout=DrawMeshCurvature(obj,varargin)
+            %{
+            draws the mesh surface with curvature colors
+            
+            Varagin inputs:
+            Ax - handle of axes. if none chosen will draw to gca
+            N - number of points drawn per patch are N^2. by default N=30
+            Type - 'gaussian'/'mean'/'none'. default set to 'none'
+            Title - title of axes str
+            FaceAlpha - facealpha of drawn surfaces ranges [0,1]
+            EdgeColor - edgecolor of drawn faces or 'none'
+            
+            IMPORTANT NOTE: %assumes block is made out of rectangular mesh of patches
+            
+            Outputs by varargout:
+            varargout{1} = Handles - array of handles size(1,Patch Amount)
+            varargout{2} = Ax - returns the axes handle the surfaces were drew on
+            %}
+            
+            %default values
+            N=30; Type='gaussian'; Technique='discrete'; FaceAlpha=1; EdgeColor='none';
+            %Obtain inputs
+            for ind=1:2:length(varargin)
+                comm=lower(varargin{ind});
+                switch comm
+                    case 'n'
+                        N=varargin{ind+1};
+                    case 'ax'
+                        Ax=varargin{ind+1};
+                    case 'type'
+                        Type=varargin{ind+1};
+                    case 'title'
+                        Title=varargin{ind+1};
+                    case 'facealpha'
+                        FaceAlpha=varargin{ind+1};
+                    case 'edgecolor'
+                        EdgeColor=varargin{ind+1};
+                    case 'technique'
+                        Technique=varargin{ind+1};
+                    otherwise
+                        error('no such name-value pair exists');
+                end
+            end
+            
+            %create axes if not given
+            if ~exist('Ax','var') || isempty(Ax)
+                Fig=figure('color',[0,0,0]);
+                Ax=axes(Fig,'color',[0,0,0],'ZColor',[1,1,1],'XColor',[1,1,1],'YColor',[1,1,1]);
+                colormap(Ax,'jet');
+                xlabel(Ax,'x'); ylabel(Ax,'y'); zlabel(Ax,'z');
+                axis(Ax,'equal'); grid(Ax,'on'); hold(Ax,'on'); view(Ax,3);
+            end
+            if exist('Title','var') && isa(Title,'char') %set title if provided
+                title(Ax,['\color{white}',Title]);
+            end
+            
+            %calculate surface mesh points
+            PtchAmnt=size(obj.Patches,3);
+            sz=size(obj.Patches);
+            Handles=gobjects(1,PtchAmnt);
+            switch lower(Technique)
+                case 'discrete'
+                    switch lower(Type)
+                        case 'gaussian'
+                            for k=1:PtchAmnt
+                                Pcp=obj.Vertices(obj.Patches(:,:,k),:); %Obtain patch control points.
+                                Pcp=reshape(Pcp,[sz(1:2),3]); %format to match requirements of BezPtchCP2SrfP
+                                [Psrfp]=BezPtchCP2SrfP(Pcp,N);
+                                x=Psrfp(:,:,1); y=Psrfp(:,:,2); z=Psrfp(:,:,3);
+                                [gaussianCurvature,~]=DiscreteSrfCurvature(x,y,z);
+                                gaussianCurvature=filloutliers(gaussianCurvature,'nearest');
+                                Handles(k)=surf(Ax,x,y,z,abs(gaussianCurvature),'facealpha',FaceAlpha,'facecolor',...
+                                    'interp','edgecolor',EdgeColor);
+                                drawnow;
+                            end
+                        case 'mean'
+                            for k=1:PtchAmnt
+                                Pcp=obj.Vertices(obj.Patches(:,:,k),:); %Obtain patch control points.
+                                Pcp=reshape(Pcp,[sz(1:2),3]); %format to match requirements of BezPtchCP2SrfP
+                                [Psrfp]=BezPtchCP2SrfP(Pcp,N);
+                                x=Psrfp(:,:,1); y=Psrfp(:,:,2); z=Psrfp(:,:,3);
+                                [~,meanCurvature]=DiscreteSrfCurvature(x,y,z);
+                                meanCurvature=filloutliers(meanCurvature,'nearest');
+                                Handles(k)=surf(Ax,x,y,z,abs(meanCurvature),'facealpha',FaceAlpha,'facecolor',...
+                                    'interp','edgecolor',EdgeColor);
+                                drawnow;
+                            end
+                    end
+                case 'parametric'
+                    [K,H,Psym]=ParametricBezSrfCurvature('BezO',obj.BezierOrder,'Output','symbolic');
+                    switch Type
+                        case 'gaussian'
+                            for k=1:PtchAmnt
+                                Pcp=obj.Vertices(obj.Patches(:,:,k),:); %Obtain patch control points.
+                                Pcp=reshape(Pcp,[sz(1:2),3]); %format to match requirements of BezPtchCP2SrfP
+                                
+                                [Psrfp,U,V]=BezPtchCP2SrfP(Pcp,N);
+                                x=Psrfp(:,:,1); y=Psrfp(:,:,2); z=Psrfp(:,:,3);
+                                
+                                Kpatch=matlabFunction(subs(K,[Psym(:,:,1),Psym(:,:,2),Psym(:,:,3)],...
+                                    [Pcp(:,:,1),Pcp(:,:,2),Pcp(:,:,3)]));
+                                gaussianCurvature=Kpatch(U,V);
+                                Handles(k)=surf(Ax,x,y,z,abs(gaussianCurvature),'facealpha',FaceAlpha,'facecolor',...
+                                    'interp','edgecolor',EdgeColor);
+                                drawnow;
+                            end
+                        case 'mean'
+                            for k=1:PtchAmnt
+                                Pcp=obj.Vertices(obj.Patches(:,:,k),:); %Obtain patch control points.
+                                Pcp=reshape(Pcp,[sz(1:2),3]); %format to match requirements of BezPtchCP2SrfP
+                                [Psrfp,U,V]=BezPtchCP2SrfP(Pcp,N);
+                                x=Psrfp(:,:,1); y=Psrfp(:,:,2); z=Psrfp(:,:,3);
+                                
+                                Hpatch=matlabFunction(subs(H,[Psym(:,:,1),Psym(:,:,2),Psym(:,:,3)],...
+                                    [Pcp(:,:,1),Pcp(:,:,2),Pcp(:,:,3)]));
+                                meanCurvature=Hpatch(U,V);
+                                Handles(k)=surf(Ax,x,y,z,abs(meanCurvature),'facealpha',FaceAlpha,'facecolor',...
+                                    'interp','edgecolor',EdgeColor);
+                            end
+                    end
+            end
+            
             
             %Create output
             if nargout==0, varargout={};
@@ -472,24 +581,28 @@ classdef BezCP
                 x=Pcp(:,:,1); y=Pcp(:,:,2); z=Pcp(:,:,3);
                 for j=1:BezO+1
                     Handles(1,j,k)=plot3(Ax,x(j,:),y(j,:),z(j,:),'Color',Color(k,:),...
-                    'MarkerSize',Msize,'linestyle','--','linewidth',LineWidth);
+                        'MarkerSize',Msize,'linestyle','--','linewidth',LineWidth);
                     Handles(2,j,k)=plot3(Ax,x(:,j),y(:,j),z(:,j),'Color',Color(k,:),...
-                    'MarkerSize',Msize,'linestyle','--','linewidth',LineWidth);
+                        'MarkerSize',Msize,'linestyle','--','linewidth',LineWidth);
                 end
                 pause(PauseTime);
             end
             
-            %Create output 
+            %Create output
             if nargout==0, varargout={};
-            else, varargout={Handles,Ax}; end  
+            else, varargout={Handles,Ax}; end
         end
-        function xyz=CombinePatches(obj,N)
+        function xyz=Patches2PointCloud(obj,N)
             %{
             %N - number of points evaluated for each patch is N^2
             
             %Output:
             %xyz size PtchAmnt*N x N x 3 of all patches combined where the
             %third dimension is ordered [x,y,z]
+            
+            NOTE:
+            this is practical for point cloud uses, but it eliminated all
+            conecitivity relations between patches
             %}
             
             PtchAmnt=size(obj.Patches,3);
@@ -657,7 +770,7 @@ classdef BezCP
             
             if nargin>0 %figure/axes were provided
                 varargout={}; %no need to return output
-                var1=varargin{1}; 
+                var1=varargin{1};
                 switch class(var1)
                     case 'matlab.ui.Figure'
                         Fig=var1;
@@ -668,7 +781,7 @@ classdef BezCP
                         error('input must be an axes/figure handle');
                 end
             else %create figure and axes. varargout obtains figure handle
-                Fig=figure('color',[0,0,0]); 
+                Fig=figure('color',[0,0,0]);
                 varargout{1}=Fig;
                 Ax=axes(Fig);
             end
@@ -709,6 +822,8 @@ classdef BezCP
                     PntCld=PntCld.Location;
             end
             
+            %default values
+            Msize=1;
             %Obtain varargin inputs
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
@@ -730,8 +845,11 @@ classdef BezCP
             
             %varargin input check
             %if both Color and ColorMap are provided, only color will be relevant.
-            if exist('ColorMap','var') && exist('Color','var')
-                warning('both ColorMap and Color were provided. Draws by ColorMap');
+            if exist('ColorMap','var')
+                colormap(Ax,ColorMap);
+                if exist('Color','var')
+                    warning('both ColorMap and Color were provided. Draws by ColorMap');
+                end
             end
             
             %Default values and some more input check (in Color)
@@ -744,17 +862,10 @@ classdef BezCP
             if exist('Title','var') && isa(Title,'char') %set title if provided
                 title(Ax,['\color{white}',Title]);
             end
-            if ~exist('Msize','var') || isempty(Msize)
-                Msize=1;
-            end
-            if ~exist('ColorMap','var') || isempty(ColorMap)
-                ColorMap='parula';
-            end
             
             %draw. function call pcshow depends on color choice
             if ~exist('Color','var') || isempty(Color)
                 pcshow(PntCld,'MarkerSize',Msize,'Parent',Ax);
-                colormap(Ax,ColorMap);
             else
                 if numel(Color)==3
                     pcshow(PntCld,Color,'MarkerSize',Msize,'Parent',Ax);
@@ -762,7 +873,6 @@ classdef BezCP
                     error('Color must be a 1x3 RGB vector');
                 end
             end
-            
             
             pcH=Ax.Children(1); %Obtain handle of point cloud drawn onto axes.
             %note: graphic handles stack on to their parents
@@ -919,6 +1029,7 @@ function [SrfP,U,V]=BezPtchCP2SrfP(Pcp,N)
 retruns evaulted points on bezier patch surface from bezier patch conrol
 points. Amount of points if symmetric for both parametre direction (N)
 
+%Inputs:
 N - number of points for patching drawing is N^2
 Pcp- patch control points will be in the format of size(Pcp)=[Vorder+1,Uorder+1,3]
 for example: control point (1,1) value is placed as such: Pcp(1,1,:) = [X,Y,Z]
@@ -929,13 +1040,14 @@ EXAMPLE: Pcp(:,:)= P11,P12,P13 -----> u direction
                   |
     v direction   V
 
-
-returns Psrfp (Patch surf points) - numeric matrix NxNx3 containing (:,:[x,y,z]) of patch
-and U,V for meshing if anyone wants.
+%Output:
+Psrfp (Patch surf points) - numeric matrix NxNx3 containing (:,:[x,y,z]) of
+evaluated bezier patch points
+U,V - for meshing if anyone wants.
 %}
+
+[u,v]=deal(linspace(0,1,N));
 SrfP=zeros(N,N,3); %initalize
-u=linspace(0,1,N);
-v=linspace(0,1,N);
 [U,V]=meshgrid(u,v);
 for i=1:N
     for j=1:N
@@ -945,7 +1057,7 @@ for i=1:N
 end
 end
 %curvature evaluation
-function [K,H,Pmax,Pmin]=SurfCurvature(X,Y,Z)
+function [K,H,Pmax,Pmin]=DiscreteSrfCurvature(X,Y,Z)
 %{
 Created by Daniel Claxton
 Taken from
@@ -1021,6 +1133,111 @@ H = reshape(H,s,t);
 Pmax = H + sqrt(H.^2 - K);
 Pmin = H - sqrt(H.^2 - K);
 end
+function [K,H,P]=ParametricBezSrfCurvature(varargin)
+%{
+Note: heavily relies on symbolic toolbox
+
+varargin Input:
+P - nxnx3 matrix of control points where the third dimension correlates to
+[x,y,z]
+BezO - bezier order - numeric value. Bezier Order must fulfill BezO=size(P,1)+1=size(P,2)+1
+Output - 'symbolic'(default)/'function' (function - anonymus function
+handle)
+
+Output:
+K - gaussian curature as a function of u,v in symbolic/anonymus function handle
+H - mean curature as a function of u,v in symbolic/anonymus function handle
+P - control point matrix. size(BezO+1,BezO+1,3) where Px=P(:,:,1); Py=P(:,:,2); Pz=P(:,:,3);
+%will be symbolic if not provided
+
+sources:
+https://en.wikipedia.org/wiki/First_fundamental_form
+https://en.wikipedia.org/wiki/Second_fundamental_form
+Computational Geomtrey for Design and Manufacture (I.D.Faux, M,J,Pratt) page 108
+computational geomtrey 1 lecture 7
+
+notes:
+U=[ 1, u, u^2, u^3...u^BezO]
+V=[ 1, v, v^2, v^3...v^BezO]
+P - matrix of control points. size(BezO+1,BezO+1,3)
+Px=P(:,:,1); Py=P(:,:,2); Pz=P(:,:,3);
+x(u,v)=UBPxB'V'
+y(u,v)=UBPyB'V'
+z(u,v)=UBPzB'V'
+r(u,v) = [x(u,v),y(u,v),z(u,v)] - surface function
+%}
+
+%default values:
+Output='symbolic';
+for ind=1:2:length(varargin)
+    comm=lower(varargin{ind});
+    switch comm
+        case 'p'
+            P=varargin{ind+1};
+        case 'bezo'
+            BezO=varargin{ind+1};
+        case 'output'
+            Output=varargin{ind+1};
+        otherwise
+            error('no such name-value pair exists');
+    end
+end
+
+if ~exist('P','var') || isempty(P) %if P wasnt provided, solve for symbolic control points
+    if exist('BezO','var') || isempty(BezO) %if user provided Bezier Order
+        Px=sym('Px%d%d',[BezO+1,BezO+1]);
+        Py=sym('Py%d%d',[BezO+1,BezO+1]);
+        Pz=sym('Pz%d%d',[BezO+1,BezO+1]);
+        P=cat(3,Px,Py,Pz);
+    else %Bezier Order wasnt provided
+        error('if control point matrix P isnt provided, user must provide Bezier Order of surface');
+    end
+else %user provided control points
+    Px=P(:,:,1);
+    Py=P(:,:,2);
+    Pz=P(:,:,3);
+    if exist('BezO','var') && ~isempty(BezO) %If user provided both P and BezierOrder. check input
+        P_BezO=sqrt(numel(P))+1; %create BezO as a function of P size.
+        if P_BezO~=BezO, error('Bezier Order must fulfill BezO=size(P,1)+1=size(P,2)+1'); end
+    end
+end
+
+%define surfaces x(u,v), y(u,v), z(u,v)
+syms u v real
+[U,V]=deal(sym(zeros(1,BezO+1)));
+for i=1:BezO+1
+    U(i)=u^(i-1);
+    V(i)=v^(i-1);
+end
+B=fn_BezMatrix(BezO); %bezier matrix of BezO order (symmetric)
+x=U*B*Px*B'*V';
+y=U*B*Py*B'*V';
+z=U*B*Pz*B'*V';
+
+%define surface r(u,v) and find derivatives
+r=[x,y,z];
+r_u=diff(r,u); r_v=diff(r,v);
+r_uu=diff(r_u,u); r_vv=diff(r_v,v);
+r_uv=diff(r_u,v); r_vu=diff(r_v,u);
+
+%surface matrices and the such
+n=cross(r_u,r_v)/norm(cross(r_u,r_v));
+Fnd1=[dot(r_u,r_u),dot(r_u,r_v); %<---- first fundemental matrix
+    dot(r_v,r_u),dot(r_v,r_v)];
+Fnd2=[dot(n,r_uu),dot(n,r_uv); %<----- second fundemental matrix
+    dot(n,r_vu),dot(n,r_vv)];
+E=Fnd1(1,1); F=Fnd1(1,2); G=Fnd1(2,2);
+L=Fnd2(1,1); M=Fnd2(1,2); N=Fnd2(2,2);
+
+switch Output
+    case 'symbolic'
+        K=(L*N-M^2)/(E*G-F^2); %gaussian curvature
+        H=(N*E-2*M*F+L*G)/(E*G-F^2); %mean curvature
+    case 'function'
+        K=matlabFunction((L*N-M^2)/(E*G-F^2)); %gaussian curvature
+        H=matlabFunction((N*E-2*M*F+L*G)/(E*G-F^2)); %mean curvature
+end
+end
 %Some more Bezier functions.
 function P=fn_PseduoInverse(B,u,v,Ps)
 %{
@@ -1081,6 +1298,9 @@ end
 end
 function B=fn_BezMatrix(BezO)
 %{
+Note: heavily relies on symbolic toolbox
+
+
 Input:
 BezO - bezier order of the u and v polynomials (symmetric)
 
