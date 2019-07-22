@@ -1,5 +1,5 @@
 %% Peaks
-PtchAmnt=16;
+PtchAmnt=4;
 Layers=sqrt(PtchAmnt);
 BezO=4; 
 N=Layers*BezO+1;

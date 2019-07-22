@@ -28,7 +28,7 @@ function varargout = Bez4StmpGUI(varargin)
 
 % Edit the above text to modify the response to help Bez4StmpGUI
 
-% Last Modified by GUIDE v2.5 18-Jul-2019 18:51:15
+% Last Modified by GUIDE v2.5 22-Jul-2019 14:22:18
 
 % Begin initialization code - DO NOT EDIT
 gui_Singleton = 1;
@@ -97,15 +97,6 @@ function varargout = Bez4StmpGUI_OutputFcn(hObject, eventdata, handles)
 varargout{1} = handles.output;
 %% Callbacks
 %action related
-function FileVarNameEdit_Callback(hObject, eventdata, handles)
-%cancel all actions but load (turn pushbuttons dark)
-DarkGreen=[0.31,0.49,0.37]; DarkBlue=[0.4,0.58,0.62];
-handles.ScanPointCloudPush.BackgroundColor=DarkGreen;
-handles.BezierSurfaceMeshPlotPush.BackgroundColor=DarkGreen;
-handles.HausdorffPlotPush.BackgroundColor=DarkGreen;
-handles.CalculatePush.BackgroundColor=DarkBlue;
-handles.ExportPush.BackgroundColor=DarkBlue;
-handles.SaveWorkspacePush.BackgroundColor=DarkBlue;
 function LoadPush_Callback(hObject, eventdata, handles)
 %{
 Updates handles.GUIstruct.Scan by user input and drawns it unto handles.Ax
@@ -121,22 +112,21 @@ looks for Bez4Stmp/pointCloud/double class with the given name in workspace
 and loads it.
 %}
 
-%clear axes incase of error
-Ax=handles.Ax;
-cla(Ax,'reset');
-BezCP.CreateDrawingAxes(Ax);
-
 str=handles.FileVarNamePopUp.String{handles.FileVarNamePopUp.Value};
 switch str
     case 'File with extension'
-        FileFullName=handles.FileVarNameEdit.String;
-        [~,FileName,ext]=fileparts(FileFullName);
+        filter={'*.stl;*.mat'};
+        [file,path,Ind]=uigetfile(filter);
+        if Ind==0, return, end %user cancelled 
+        [~,name,ext]=fileparts(file);
+        FileFullName=[path,file];
+        handles.NameTxt.String=sprintf('Name: %s',name);
         switch ext
             case '.stl'
                 [~,Scan]=stlread(FileFullName); %obtain vertices of STL
             case '.mat'
                 S=load(FileFullName); %S is a struct with fieldnames being the names of the variables in mat
-                NameMatches=strcmp(fieldnames(S),FileName); %logical array
+                NameMatches=strcmp(fieldnames(S),name); %logical array
                 cellS=struct2cell(S); %cell array containig struct fields (loses field names)
                 Bez4StmpClassMatches=cellfun(@(s) isa(s,'Bez4Stmp'),cellS); %logical array
                 doubleClassMatches=cellfun(@(s) isa(s,'double'),cellS); %logical array
@@ -169,8 +159,10 @@ switch str
                 end %end .m related if-elseif
         end %end .ext related switch-case
     case 'Workspace variable'
-        VarName=handles.FileVarNameEdit.String;
+        Uinput=inputdlg('Please enter variable name','',1);
+        VarName=Uinput{1};
         Var=evalin('base',VarName);
+        handles.NameTxt.String=sprintf('Name: %s',VarName);
         switch class(Var)
             case 'pointCloud'
                 Scan=pointCloud.Location;
@@ -216,8 +208,11 @@ else %if variable "Stmp" wasnt created (double or pointCloud input)
     handles.SaveWorkspacePush.BackgroundColor=DarkBlue;
 end
 
-guidata(hObject, handles); %save handles in figure
-ScanPointCloudPush_Callback(handles.ScanPointCloudPush,[],handles)%Draw InputPointCloud
+%save handles in figure
+guidata(hObject, handles); 
+
+%Draw InputPointCloud
+ScanPointCloudPush_Callback(handles.ScanPointCloudPush,[],handles)
 function CalculatePush_Callback(hObject, eventdata, handles)
 DarkBlue=[0.4,0.58,0.62];
 if norm(hObject.BackgroundColor-DarkBlue)<0.01
@@ -234,11 +229,13 @@ Slices=str2double(handles.SlicesEdit.String);
 BezierOrder=str2double(handles.BezierOrderEdit.String);
 Cap=str2num(handles.CapPopUp.String{handles.CapPopUp.Value});
 XcenterCalcMethod=handles.XcenterPopUp.String{handles.XcenterPopUp.Value};
+RadialOptimizePseudoInverse=str2num(handles.RadialOptimizePseudoInversePop.String{handles.RadialOptimizePseudoInversePop.Value});
 
 %compute stmp
 Scan=handles.GUIstruct.Scan;
 Stmp=Bez4Stmp(Scan,'Cap',Cap,'SphLayers',SphLayers,'CylLayers',CylLayers,...
-    'Slices',Slices,'BezierOrder',BezierOrder,'XcenterCalculationMethod',XcenterCalcMethod);
+    'Slices',Slices,'BezierOrder',BezierOrder,'XcenterCalculationMethod',XcenterCalcMethod,...
+    'RadialOptimizePseudoInverse',RadialOptimizePseudoInverse);
 
 %alert user of succsessful load and enable actions by changing pushbuttons
 %color
@@ -252,6 +249,9 @@ handles.SaveWorkspacePush.BackgroundColor=LightBlue;
 
 handles.GUIstruct.Stmp=Stmp; %save to GUI struct
 guidata(hObject, handles); %save handles in figure
+
+%Draw Bezier surface mesh
+BezierSurfaceMeshPlotPush_Callback(handles.BezierSurfaceMeshPlotPush,[],handles)
 function SaveWorkspacePush_Callback(hObject, eventdata, handles)
 DarkBlue=[0.4,0.58,0.62];
 if norm(hObject.BackgroundColor-DarkBlue)<0.01
@@ -280,6 +280,7 @@ if ~ischar(file), return, end %user cancelled operation in ui
 switch ext
     case '.igs'
         Stmp.StmpBezCP.igsWrite(name);
+        movefile([pwd,filesep,file],[path,file],'f');
     case '.mat' %"dynamic fieldname technique"
         S.(name)=Stmp; %create struct with field [name chosen by user]
         save([path,file],'-struct','S') %save .mat file with variable named [name chosen by user]
@@ -360,13 +361,12 @@ Stmp=handles.GUIstruct.Stmp;
 Ax=handles.Ax;
 cla(Ax,'reset');
 Ax=BezCP.CreateDrawingAxes(Ax);
-colormap(Ax,'jet');k
+colormap(Ax,'jet');
 colorbar(Ax);
 
 %Draw. Currently discrete gives better results for some reason
 Type=handles.CurvaturePopUp.String{handles.CurvaturePopUp.Value};
 Stmp.StmpBezCP.DrawMeshCurvature('Type',Type,'Ax',Ax,'Technique','Discrete');
-
 %info callbacks
 function DocumentationPush_Callback(hObject, eventdata, handles)
 %% Functions
@@ -537,6 +537,17 @@ end
 function CurvaturePopUp_Callback(hObject, eventdata, handles)
 function CurvaturePopUp_CreateFcn(hObject, eventdata, handles)
 % hObject    handle to CurvaturePopUp (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: popupmenu controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+function RadialOptimizePseudoInversePop_Callback(hObject, eventdata, handles)
+function RadialOptimizePseudoInversePop_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to RadialOptimizePseudoInversePop (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    empty - handles not created until after all CreateFcns called
 

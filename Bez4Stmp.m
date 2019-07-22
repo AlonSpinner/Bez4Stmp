@@ -21,6 +21,7 @@ classdef Bez4Stmp
         Slices=4;
         BezierOrder=3;
         XcenterCalculationMethod='normalSTD'; %'GeomtreyAssumption'/'normalSTD'/'normalThreshold'
+        RadialOptimizePseudoInverse=false; %true/false
     end
     methods %public methods, accessible from outside the class
         function obj=Bez4Stmp(PntCldIn,varargin) %Constructor
@@ -121,6 +122,8 @@ classdef Bez4Stmp
                         obj.BezierOrder=varargin{ind+1};
                     case 'xcentercalculationmethod'
                         obj.XcenterCalculationMethod=varargin{ind+1};
+                    case 'radialoptimizepseudoinverse'
+                        obj.RadialOptimizePseudoInverse=varargin{ind+1};  
                     otherwise
                         error('no such name-value pair exists');
                 end
@@ -150,7 +153,8 @@ classdef Bez4Stmp
             
             %Find Xcenter - point seperating between sphereical and
             %Cylinderical part
-            Xcntr=FindXcenter(PntCld,obj.XcenterCalculationMethod);
+            %insert R incase it was asked for XcenterCalculationMethod.
+            Xcntr=FindXcenter(PntCld,obj.XcenterCalculationMethod,'boundingcylinderradius',R);
             obj.Xcenter=Xcntr; %introduce to parameters
             
             %Find radius of sphereical part
@@ -172,13 +176,23 @@ classdef Bez4Stmp
             
             %Optimize CompactCP by radially expanding the vertices to PntCld
             h=helpdlg('Optimization occuring. Please wait. . .');
-            obj.RegisteredBezCP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display',OptDisplay,...
-                'MaxIterations',MaxOptimizationIterions); %expand CompactCP to PntCld
+            obj.RegisteredBezCP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,...
+                'Display',OptDisplay,'MaxIterations',MaxOptimizationIterions,...
+                'target','pointcloud'); %expand CompactCP to PntCld
             close(h); %close helpdlg
             
             %find control points describiing optimized CP.Vertices mesh surface
             obj.StmpBezCP=obj.RegisteredBezCP.PesudoInverseVertices;
-            
+
+            if obj.RadialOptimizePseudoInverse
+                h=helpdlg(sprintf(['Optimization occuring.\n',...
+                    'May take a couple hours. Please wait. . .']));
+                obj.StmpBezCP=RadialOptimization4CP(obj.StmpBezCP,PntCld,[-minR,+10*maxR],Xcntr,...
+                    'Display',OptDisplay,'MaxIterations',MaxOptimizationIterions,...
+                    'target','SurfaceControlPoints','N',15); %expand CompactCP to PntCld
+                close(h); %close helpdlg
+            end
+                    
             %if no cap, top edges whose location may vary across
             %top patches due to optimization to produce a peak point
             if ~obj.Cap
@@ -419,11 +433,13 @@ function pcdownsample.
 Input:
 PtCldP  - pointCloud object
 Method - 'GeomtreyAssumption'/'normalSTD'/'normalThreshold'
-Varargin - depending on method:
-normalSTD - BoundingCylinderLength
-GeomtreyAssumption: BoundingCylinderRadius
-normalThreshold: requires Threshold scalar ranges from [0,1]
-suggestion: 0.4
+
+Varargin input:
+BoundingCylinderRadius for Geomtrey Assumption method
+Threshold - scalar ranges from [0,1] for normalThreshold method (default is
+0.4)
+Zfilter - ranges [0,1] and filters out a percentile of stump, from buttom,
+default is 0.25)
 
 Output:
 Xcenter [x,y,z] is the node that seprates between the "sphere" part and the
@@ -440,25 +456,30 @@ CldP main axis
 |         |
 %}
 
+%Default:
+Threshold=0.4; Zfilter=0.25^-1;
 for ind=1:2:length(varargin)
     comm=lower(varargin{ind});
     switch comm
         case 'boundingcylinderradius'
             R=varargin{ind+1};
-        case 'Threshold'
+        case 'threshold'
             Threshold=varargin{ind+1};
+        case 'zfilter'
+            Zfilter=varargin{ind+1};
         otherwise
             error('no such name-value pair exists');
     end
 end
 
-switch method
-    case 'GeomtreyAssumption'
+switch lower(method)
+    case 'geomtreyassumption'
         if ~exist('R','var') || isempty(R)
             error('BoundingCylinderRadius not introduced to function');
         end
-        Znode=L-R;
-    case 'normalSTD'
+        zmax=max(PtCld.Location(:,3));
+        Znode=zmax-R;
+    case 'normalstd'
         %checks for biggest change in standart variation in transient
         %signal and determines it as the point of interest.
         
@@ -470,19 +491,19 @@ switch method
         
         %sometimes there is noise in the lower parts of the given scan that prodces vertical normals
         zmax=max(PtCld.Location(:,3));
-        pass=find(PtCld.Location(:,3)>zmax/4); %all vertices that pass the condition
+        pass=find(PtCld.Location(:,3)>zmax/Zfilter); %all vertices that pass the condition
         CleanPtCld=select(PtCld,pass);
         k=8;
         normals=pcnormals(CleanPtCld,k);
         Idx=findchangepts(normals(:,3),'Statistic','std'); %check for the point in which the std changes the moves
         Znode=CleanPtCld.Location(Idx,3);
-    case 'normalThreshold'
-        if ~exist('Threshold','var') || isempty(Threshold) || (Threshold>1 || Threshold<0)
+    case 'normalthreshold'
+        if exist('Threshold','var') && (Threshold>1 || Threshold<0)
             error('Failed to compute Xcenter. Need to provide a Threshold in range [0,1] with the chosen method')
         end
         %sometimes there is noise in the lower parts of the given scan that prodces vertical normals
         zmax=max(PtCld.Location(:,3));
-        pass=find(PtCld.Location(:,3)>zmax/4); %all vertices that pass the condition
+        pass=find(PtCld.Location(:,3)>zmax/Zfilter); %all vertices that pass the condition
         CleanPtCld=select(PtCld,pass);
         k=8; %see explination in normalSTD method.
         normals=pcnormals(CleanPtCld,k);
@@ -495,7 +516,6 @@ end
 pass=find(PtCld.Location(:,3)>Znode); %all vertices that pass the condition
 AbvPtCld=select(PtCld,pass);
 Xcenter=[mean(AbvPtCld.Location(:,[1,2])),Znode];
-
 end
 function [Ncyl,Nsph,Ncircum]=MeshNodesAmount(SphLayers,CylLayers,Slices,BezierOrder)
 %{
@@ -644,6 +664,10 @@ values of points
 MaxIterations - integer,scalar.
 Display - 'none'/'iter/'final'. displays data in fmincon. see fmincon
 options for more
+Target - 'pointcloud'/'SurfaceControlPoints'
+N - points evalulated per patch are N^2. only important if Target is set to
+'SurfaceControlPoints'
+
 
 Output:
 CP - updated, optimized CP
@@ -652,7 +676,7 @@ CP - updated, optimized CP
 %varargin input and their defaults
 DeltaR=Rbounds(2)-Rbounds(1);
 DiffMinChange=DeltaR/1000; DiffMaxChange=DeltaR/10; MaxIterations=20;
-Display='none';
+Display='none'; Target='pointcloud'; N=15;
 for ind=1:2:length(varargin)
     comm=lower(varargin{ind});
     switch comm
@@ -664,6 +688,10 @@ for ind=1:2:length(varargin)
             MaxIterations=varargin{ind+1};
         case 'display'
             Display=varargin{ind+1};
+        case 'target'
+            Target=varargin{ind+1};
+        case 'n'
+            N=varargin{ind+1};
         otherwise
             error('no such name-value pair exists');
     end
@@ -688,7 +716,13 @@ t=Isph.*tsph+Icyl.*tcyl; %radial vectors of all CP.Vertices depending on their c
 %vecnorm(V(:,[1,2])-Xcenter(1:2),2,2) may result in zero
 
 %Optimization
-fun=@(r) CostFcn(CP,StaticPntCld,t,r);
+switch lower(Target)
+    case 'pointcloud'
+        fun=@(r) CostFcn_pointCloud(CP,StaticPntCld,t,r);
+    case 'surfacecontrolpoints'
+        fun=@(r) CostFcn_SurfaceControlPoints(CP,StaticPntCld,t,r,N);
+end
+
 options = optimoptions('fmincon','Algorithm','interior-point','Display',Display,...
     'DiffMaxChange',DiffMaxChange,'DiffMinChange',DiffMinChange,...
     'MaxIterations',MaxIterations,'MaxFunctionEvaluations',MaxIterations*m);
@@ -699,7 +733,7 @@ rOpt=fmincon(fun,r0,[],[],[],[],lb,ub,[],options);
 
 %Create output
 CP.Vertices=V+t.*rOpt;
-    function Cost=CostFcn(CP,StaticPntCld,t,r)
+    function Cost=CostFcn_pointCloud(CP,StaticPntCld,t,r)
         %Input:
         %CP - BezCP class
         %StaticPntCld  - pointCloud class
@@ -716,6 +750,30 @@ CP.Vertices=V+t.*rOpt;
         CP.Vertices=CP.Vertices+t.*r;
         for i=1:size(CP.Vertices,1)
             [~,d]=findNearestNeighbors(StaticPntCld,CP.Vertices(i,:),1);
+            Cost=Cost+d^2;
+        end
+    end
+    function Cost=CostFcn_SurfaceControlPoints(CP,StaticPntCld,t,r,N)
+        %Input:
+        %CP - BezCP class
+        %StaticPntCld  - pointCloud class
+        %t - vectors size mx3 of radial direction.
+        %r - vector mx1 of radius values (optimization parameter)
+        %N -  %points evalulated per patch are N^2
+        
+        %Output:
+        %Cost=least squares cost essentially (CP.Vertices+t.*r - StaticPntCld)^2
+        
+        %note: Nested functions variables who share a common name with
+        %their parent function will become global. for such reason, 'N' was
+        %used instead of 'm'
+        Cost=0;
+        CP.Vertices=CP.Vertices+t.*r;
+        xyz=CP.Patches2PointCloud(N); %evaluate points on stump
+        x=xyz(:,:,1); y=xyz(:,:,2); z=xyz(:,:,3);
+        for i=1:numel(x)
+            point=[x(i),y(i),z(i)];
+            [~,d]=findNearestNeighbors(StaticPntCld,point,1);
             Cost=Cost+d^2;
         end
     end

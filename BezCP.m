@@ -394,6 +394,7 @@ classdef BezCP
             Title - title of axes str
             FaceAlpha - facealpha of drawn surfaces ranges [0,1]
             EdgeColor - edgecolor of drawn faces or 'none'
+            PauseTime - seconds to pause after each patch drawn
             
             IMPORTANT NOTE: %assumes block is made out of rectangular mesh of patches
             
@@ -404,6 +405,7 @@ classdef BezCP
             
             %default values
             N=30; Type='gaussian'; Technique='discrete'; FaceAlpha=1; EdgeColor='none';
+            PauseTime=0;
             %Obtain inputs
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
@@ -422,6 +424,8 @@ classdef BezCP
                         EdgeColor=varargin{ind+1};
                     case 'technique'
                         Technique=varargin{ind+1};
+                    case 'pausetime'
+                        PauseTime=varargin{ind+1};
                     otherwise
                         error('no such name-value pair exists');
                 end
@@ -457,6 +461,7 @@ classdef BezCP
                                 Handles(k)=surf(Ax,x,y,z,abs(gaussianCurvature),'facealpha',FaceAlpha,'facecolor',...
                                     'interp','edgecolor',EdgeColor);
                                 drawnow;
+                                pause(PauseTime);
                             end
                         case 'mean'
                             for k=1:PtchAmnt
@@ -469,6 +474,7 @@ classdef BezCP
                                 Handles(k)=surf(Ax,x,y,z,abs(meanCurvature),'facealpha',FaceAlpha,'facecolor',...
                                     'interp','edgecolor',EdgeColor);
                                 drawnow;
+                                pause(PauseTime);
                             end
                     end
                 case 'parametric'
@@ -488,6 +494,7 @@ classdef BezCP
                                 Handles(k)=surf(Ax,x,y,z,abs(gaussianCurvature),'facealpha',FaceAlpha,'facecolor',...
                                     'interp','edgecolor',EdgeColor);
                                 drawnow;
+                                pause(PauseTime);
                             end
                         case 'mean'
                             for k=1:PtchAmnt
@@ -501,6 +508,8 @@ classdef BezCP
                                 meanCurvature=Hpatch(U,V);
                                 Handles(k)=surf(Ax,x,y,z,abs(meanCurvature),'facealpha',FaceAlpha,'facecolor',...
                                     'interp','edgecolor',EdgeColor);
+                                drawnow;
+                                pause(PauseTime);
                             end
                     end
             end
@@ -732,8 +741,6 @@ classdef BezCP
             
             %Initalize
             sz=size(obj.Patches);
-            u=linspace(0,1,sz(1)); %amount of surface points as nodes in current patch
-            v=linspace(0,1,sz(2)); %amount of surface points as nodes in current patch
             B=fn_BezMatrix(obj.BezierOrder);
             Ip=zeros(sz(1),sz(2),3,sz(3));
             
@@ -741,7 +748,7 @@ classdef BezCP
             for k=1:sz(3) %amount of patches
                 VInd=reshape(obj.Patches(:,:,k),[],1); %reshape all vertices index of patch to column vec
                 Ps=reshape(obj.Vertices(VInd,:),sz(1),sz(2),3); %reshape to mxnx3
-                Ip(:,:,:,k)=fn_PseduoInverse(B,u,v,Ps); %obtain mxnx3 new control points matrix
+                Ip(:,:,:,k)=fn_PseudoInverse(B,Ps); %obtain mxnx3 new control points matrix
             end
             
             %updated obj.Vetices to the control points
@@ -954,28 +961,6 @@ classdef BezCP
             %}
             
             B=fn_BezMatrix(BezO);
-        end %only calls the function
-        function P=PseduoInverse(B,u,v,Ps)
-            %{
-            %method discovered in "BEZIER SURFACE GENERATION OF THE PATELLA"
-            %by Dale A. Patrick
-            %https://corescholar.libraries.wright.edu/cgi/viewcontent.cgi?referer=https://www.google.com/&httpsredir=1&article=1325&context=etd_all
-            %cited 6 times! WTF?
-            
-            %Input:
-            %B - bezier matrix size (BezOu+1) x (BezOv+1)
-            %Ps - points evaluated on surface
-            %u and v- arrays of values ranging [0,1] for which to relate the
-            %surface points given
-            
-            %example:
-            %Ps(i,j)=Ps(u(i),v(j))
-            
-            %Output:
-            %P - control points matrix
-            %}
-            
-            P=fn_PseduoInverse(B,u,v,Ps);
         end %only calls the function
     end
 end
@@ -1239,7 +1224,7 @@ switch Output
 end
 end
 %Some more Bezier functions.
-function P=fn_PseduoInverse(B,u,v,Ps)
+function P=fn_PseudoInverse(B,Ps)
 %{
 method discovered in "BEZIER SURFACE GENERATION OF THE PATELLA"
 by Dale A. Patrick
@@ -1249,11 +1234,9 @@ cited 6 times! WTF?
 Input:
 B - bezier matrix size (BezOu+1) x (BezOv+1)
 Ps - points evaluated on surface
-u and v- arrays of values ranging [0,1] for which to relate the
-surface points given
 
-example:
-Ps(i,j)=Ps(u(i),v(j))
+%note:
+Assumes symmetric bezier order
 
 Output:
 P - control points matrix
@@ -1277,24 +1260,20 @@ V=[v1^3,v1^2,v1,1;
 
 %obtain bezier order from cubic matrix B
 BezO=sqrt(numel(B))-1;
-
+q=linspace(0,1,BezO+1);
 %Create U and V (same size and symmetric order)
-[U,V]=deal(zeros(length(u),BezO+1));
-for i=1:length(u)
+[U,V]=deal(zeros(BezO+1,BezO+1));
+for i=1:BezO+1
     for j=1:BezO+1
-        U(i,j)=u(i)^(j-1);
-        V(i,j)=v(i)^(j-1);
+        U(i,j)=q(i)^(j-1);
+        V(i,j)=q(i)^(j-1);
     end
 end
-
-P=zeros(size(Ps)); %initalize
+pinv=@(A) inv(A'*A)*A'; %psuedo inverse matrix (moore-pensrose)
+P=zeros(BezO+1,BezO+1,3); %initalize
 for dim=1:size(Ps,3) %R3 dimensions (x,y,z)
     P(:,:,dim)=inv(B)*pinv(U)*Ps(:,:,dim)*pinv(V)'*inv(B'); %pinv stated in nested function
 end
-    function A=pinv(A)
-        %psuedo inverse matrix (moore-pensrose)
-        A=inv(A'*A)*A';
-    end
 end
 function B=fn_BezMatrix(BezO)
 %{
@@ -1325,4 +1304,16 @@ b=fliplr(bernsteinMatrix(BezO,t));
 for j=1:length(b)
     B(j,:)=coeffs(b(j),t,'all');
 end
+end
+%functions not used
+function aprxPs=approxSurfacePoints(Ps,u,v,qu,qv)
+%Spline approximation of surface points
+%Ps points according to meshgrid created by u,v
+%qu and qv are query points
+
+Psx=Ps(:,:,1); Psy=Ps(:,:,2); Psz=Ps(:,:,3);
+aprxPsx=(spline(v,spline(u,Psx,qu)',qv))';
+aprxPsy=(spline(v,spline(u,Psy,qu)',qv))';
+aprxPsz=(spline(v,spline(u,Psz,qu)',qv))';
+aprxPs=cat(3,aprxPsx,aprxPsy,aprxPsz);
 end
