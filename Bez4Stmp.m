@@ -21,7 +21,6 @@ classdef Bez4Stmp
         Slices=4;
         BezierOrder=3;
         XcenterCalculationMethod='normalSTD'; %'GeomtreyAssumption'/'normalSTD'/'normalThreshold'
-        RadialOptimizePseudoInverse=false; %true/false
     end
     methods %public methods, accessible from outside the class
         function obj=Bez4Stmp(PntCldIn,varargin) %Constructor
@@ -122,8 +121,8 @@ classdef Bez4Stmp
                         obj.BezierOrder=varargin{ind+1};
                     case 'xcentercalculationmethod'
                         obj.XcenterCalculationMethod=varargin{ind+1};
-                    case 'radialoptimizepseudoinverse'
-                        obj.RadialOptimizePseudoInverse=varargin{ind+1};  
+                    case 'controlpointscalculationmethod'
+                        obj.ControlPointsCalculationMethod=varargin{ind+1};  
                     otherwise
                         error('no such name-value pair exists');
                 end
@@ -181,17 +180,10 @@ classdef Bez4Stmp
                 'target','pointcloud'); %expand CompactCP to PntCld
             close(h); %close helpdlg
             
+           
             %find control points describiing optimized CP.Vertices mesh surface
+            %save to obj.StmpBezCP
             obj.StmpBezCP=obj.RegisteredBezCP.PesudoInverseVertices;
-
-            if obj.RadialOptimizePseudoInverse
-                h=helpdlg(sprintf(['Optimization occuring.\n',...
-                    'May take a couple hours. Please wait. . .']));
-                obj.StmpBezCP=RadialOptimization4CP(obj.StmpBezCP,PntCld,[-minR,+10*maxR],Xcntr,...
-                    'Display',OptDisplay,'MaxIterations',MaxOptimizationIterions,...
-                    'target','SurfaceControlPoints','N',15); %expand CompactCP to PntCld
-                close(h); %close helpdlg
-            end
                     
             %if no cap, top edges whose location may vary across
             %top patches due to optimization to produce a peak point
@@ -249,7 +241,8 @@ classdef Bez4Stmp
             
             %Find Xcenter - point seperating between sphereical and
             %Cylinderical part
-            Xcntr=FindXcenter(PntCld,obj.XcenterCalculationMethod);
+            %insert R incase it was asked for XcenterCalculationMethod.
+            Xcntr=FindXcenter(PntCld,obj.XcenterCalculationMethod,'boundingcylinderradius',R);
             obj.Xcenter=Xcntr; %introduce to parameters
             
             %Find radius of sphereical part
@@ -271,13 +264,23 @@ classdef Bez4Stmp
             
             %Optimize CompactCP by radially expanding the vertices to PntCld
             h=helpdlg('Optimization occuring. Please wait. . .');
-            obj.RegisteredBezCP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,'Display',OptDisplay,...
-                'MaxIterations',MaxOptimizationIterions); %expand CompactCP to PntCld
+            obj.RegisteredBezCP=RadialOptimization4CP(CompactCP,PntCld,[-minR,+maxR],Xcntr,...
+                'Display',OptDisplay,'MaxIterations',MaxOptimizationIterions,...
+                'target','pointcloud'); %expand CompactCP to PntCld
             close(h); %close helpdlg
             
             %find control points describiing optimized CP.Vertices mesh surface
             obj.StmpBezCP=obj.RegisteredBezCP.PesudoInverseVertices;
-            
+
+            if obj.RadialOptimizePseudoInverse
+                h=helpdlg(sprintf(['Optimization occuring.\n',...
+                    'May take a couple hours. Please wait. . .']));
+                obj.StmpBezCP=RadialOptimization4CP(obj.StmpBezCP,PntCld,[-minR,+10*maxR],Xcntr,...
+                    'Display',OptDisplay,'MaxIterations',MaxOptimizationIterions,...
+                    'target','SurfaceControlPoints','N',15); %expand CompactCP to PntCld
+                close(h); %close helpdlg
+            end
+                    
             %if no cap, top edges whose location may vary across
             %top patches due to optimization to produce a peak point
             if ~obj.Cap
@@ -299,7 +302,7 @@ classdef Bez4Stmp
             varargout{2} = radial hausdorff distance
             varargout{3} = handle array of graphic objects
             %}
-            N=30; zThreshold=30;
+            N=50; zThreshold=30;
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
                 switch comm
@@ -327,17 +330,26 @@ classdef Bez4Stmp
             %calculate radial distance (radial off mean point of Phd and Qhd)
             m=mean([Phd;Qhd]);
             Xcntr=obj.Xcenter;
-            if m(3)>Xcntr(3), t=(m-Xcntr)/norm(m-Xcntr,2);
-            else, t=[(m(1:2)-Xcntr(1:2)),0]/norm(m(1:2)-Xcntr(1:2),2); end
+            if m(3)>Xcntr(3)
+                t=(m-Xcntr)/norm(m-Xcntr,2);
+                x0=Xcntr; %for plotting later
+            else
+                t=[(m(1:2)-Xcntr(1:2)),0]/norm(m(1:2)-Xcntr(1:2),2); 
+                x0=[Xcntr(1:2),m(3)];
+            end
             rhd=abs(dot(Phd-Qhd,t)); %radial hausdorff distance
             
             %plot if axes were provided
             if exist('Ax','var') && isgraphics(Ax,'Axes')
-                Handles=gobjects(1,3);
+                Handles=gobjects(1,5);
                 Handles(1)=BezCP.DrawPointCloud(obj.PointCloud,'color',[0,0,1],'msize',15,'Ax',Ax); %original
-                Handles(2)=BezCP.DrawPointCloud(obj.StmpBezCP.Patches2PointCloud(30),'color',[1,1,1],'Ax',Ax); %compact
-                Handles(3)=BezCP.DrawPointCloud([Phd;Qhd],'color',[1,0,0],'msize',20,'Ax',Ax,...
-                    'title',sprintf('Hausdorff distance %.2g with Radial displacement of %.2g',hd,rhd)); %compact
+                Handles(2)=BezCP.DrawPointCloud(obj.StmpBezCP.Patches2PointCloud(N),'color',[1,1,1],'Ax',Ax); %patches
+                Handles(3)=BezCP.DrawPointCloud([Phd;Qhd],'color',[1,0,0],'msize',20,'Ax',Ax); %hd points
+                RadialLine=[m;x0];
+                Handles(4)=plot3(Ax,RadialLine(:,1),RadialLine(:,2),RadialLine(:,3),'color',[1,0.7,0],'linestyle','--'); %radial line
+                Title=sprintf(['Hausdorff distance %.2g with Radial displacement of %.2g\n',...
+                    '%g^2 points per patch'],hd,rhd,N);
+                title(Ax,['\color{white}',Title]);
             end
             
             %Create output
@@ -510,6 +522,10 @@ switch lower(method)
         pass=find(abs(normals)>Threshold); %all vertices that pass the condition
         Idx=pass(1); %take first vertex that pass condition
         Znode=CleanPtCld.Location(Idx,3);
+    case 'userinput'
+        Uinput=inputdlg('Please enter Z value');
+        if isempty(Uinput), return, end
+        Znode=str2num(Uinput{1});
 end
 
 %find [x,y] of Xcenter by mean on all the points above it (higher than Znode)

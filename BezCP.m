@@ -113,7 +113,7 @@ classdef BezCP
         Vertices
         %double size mx3 of control points
     end
-    methods %public methods, accessible from outside the class
+    methods
         function obj=BezCP(MeshNodes,BezO,varargin) %constructor
             %{
             Input:
@@ -163,14 +163,39 @@ classdef BezCP
                     
                     %add cap vertices to V
                     CapCircum=Iv(1,:); %indcies of cap circumference nodes in V
-                    Vcap=zeros((BezO-1)^2,3); %initalize vertices of cap
+                    %vertices on the circumference are CapCircum vertices.
+                    %--------------------
+                    %| 1  end           |
+                    %|   -----------    |
+                    %| 2 |         |    |
+                    %|   |         |    |
+                    %|   |_________|    |
+                    % BezO+1            |
+                    %|------------------|
+                    %finding the middle vertices by limming circumerence points (linear
+                    %interpolation) in horizontal direction and vertical
+                    %direction seperatly, and then using mean function to
+                    %unify results.
+                    [Qvert,Qhorz]=deal(zeros((BezO-1)^2,3)); %initalize vertices of cap
+                    %Vertical direction:
                     for j=2:BezO %linear interpolation
                         for i=2:BezO
                             p1=V(CapCircum(BezO+j),:);
                             p2=V(CapCircum(end-j+2),:);
-                            Vcap((i-1)*(j-1),:)=(p1*i+p2*(BezO+1-i))/(BezO+1);
+                            lambda=(i-1)/BezO;
+                            Qvert(((i-1)+(BezO-1)*(j-2)),:)=p1*lambda+p2*(1-lambda);
                         end
                     end
+                    %Horizontal direction:
+                    for i=2:BezO %linear interpolation
+                        for j=2:BezO
+                            p3=V(CapCircum(i),:);
+                            p4=V(CapCircum(end-BezO-i+2),:);
+                            lambda=(j-1)/BezO;
+                            Qhorz(((i-1)+(BezO-1)*(j-2)),:)=p4*lambda+p3*(1-lambda);
+                        end
+                    end
+                    Vcap=mean(cat(3,Qhorz,Qvert),3);
                     V=[V;Vcap]; %add to V
                     
                     %Build P - patches
@@ -198,7 +223,7 @@ classdef BezCP
                     %middle
                     for j=2:BezO
                         for i=2:BezO
-                            P(i,j,k)=(i-1)*(j-1)+NodeAmnt;
+                            P(i,j,k)=((i-1)+(BezO-1)*(j-2))+NodeAmnt;
                         end
                     end
                     
@@ -317,7 +342,7 @@ classdef BezCP
             %}
             
             %default values
-            N=30; Curvature='none'; PauseTime=0; FaceAlpha=0.6; EdgeColor='none';
+            N=30; PauseTime=0; FaceAlpha=0.6; EdgeColor='none';
             %Obtain inputs
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
@@ -328,8 +353,6 @@ classdef BezCP
                         Ax=varargin{ind+1};
                     case 'color'
                         Color=varargin{ind+1};
-                    case 'curvature'
-                        Curvature=varargin{ind+1};
                     case 'pausetime'
                         PauseTime=varargin{ind+1};
                     case 'title'
@@ -905,6 +928,9 @@ classdef BezCP
             %Output:
             %hd -scalar hausdorff distance
             %pInd,qInd - hd=norm(P(pIind,:)-Q(qInd,:))
+            
+            Ref:
+            http://cgm.cs.mcgill.ca/~godfried/teaching/cg-projects/98/normand/main.html
             %}
             
             Method='TwoSide'; %classic hausdorff defintion

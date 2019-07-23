@@ -28,7 +28,7 @@ function varargout = Bez4StmpGUI(varargin)
 
 % Edit the above text to modify the response to help Bez4StmpGUI
 
-% Last Modified by GUIDE v2.5 22-Jul-2019 14:22:18
+% Last Modified by GUIDE v2.5 24-Jul-2019 00:53:55
 
 % Begin initialization code - DO NOT EDIT
 gui_Singleton = 1;
@@ -146,7 +146,7 @@ switch str
                     %preference: Bez4Stmp>pointCloud>double
                 elseif any(Bez4StmpClassMatches) %Bez4Stmp
                     Stmp=cellS{Bez4StmpClassMatches(1)};
-                    Scan=Stmp.Scan;
+                    Scan=Stmp.Scan.Location;
                 elseif any(pointCloudClassMatches) %pointCloud
                     Scan=cellS{pointCloudClassMatches(1)}.Location;
                 elseif any(doubleClassMatches) %double
@@ -229,13 +229,11 @@ Slices=str2double(handles.SlicesEdit.String);
 BezierOrder=str2double(handles.BezierOrderEdit.String);
 Cap=str2num(handles.CapPopUp.String{handles.CapPopUp.Value});
 XcenterCalcMethod=handles.XcenterPopUp.String{handles.XcenterPopUp.Value};
-RadialOptimizePseudoInverse=str2num(handles.RadialOptimizePseudoInversePop.String{handles.RadialOptimizePseudoInversePop.Value});
 
 %compute stmp
 Scan=handles.GUIstruct.Scan;
 Stmp=Bez4Stmp(Scan,'Cap',Cap,'SphLayers',SphLayers,'CylLayers',CylLayers,...
-    'Slices',Slices,'BezierOrder',BezierOrder,'XcenterCalculationMethod',XcenterCalcMethod,...
-    'RadialOptimizePseudoInverse',RadialOptimizePseudoInverse);
+    'Slices',Slices,'BezierOrder',BezierOrder,'XcenterCalculationMethod',XcenterCalcMethod);
 
 %alert user of succsessful load and enable actions by changing pushbuttons
 %color
@@ -262,6 +260,7 @@ end
 handles=guidata(hObject); %Obtain updated handles
 Stmp=handles.GUIstruct.Stmp;
 Uinput=inputdlg('Please enter variable name','',1,{'MyStump'});
+if isempty(Uinput), return, end
 StmpName=Uinput{1};
 assignin('base',StmpName,Stmp);
 function ExportPush_Callback(hObject, eventdata, handles)
@@ -280,7 +279,9 @@ if ~ischar(file), return, end %user cancelled operation in ui
 switch ext
     case '.igs'
         Stmp.StmpBezCP.igsWrite(name);
-        movefile([pwd,filesep,file],[path,file],'f');
+        if ~strcmp([pwd,filesep,file],[path,file]) %Cannot copy or move a file or directory onto itself.
+            movefile([pwd,filesep,file],[path,file],'f');
+        end
     case '.mat' %"dynamic fieldname technique"
         S.(name)=Stmp; %create struct with field [name chosen by user]
         save([path,file],'-struct','S') %save .mat file with variable named [name chosen by user]
@@ -304,7 +305,8 @@ Ax=BezCP.CreateDrawingAxes(Ax);
 
 %Draw
 Zfilter=str2num(handles.HausedorffZThresholdEdit.String);
-Stmp.HausdorffAsses('Ax',Ax,'zthreshold',Zfilter);
+N=str2num(handles.HausdorffPatchPointsEdit.String);
+Stmp.HausdorffAsses('Ax',Ax,'zthreshold',Zfilter,'N',N);
 
 %turn rotation off. For some reason "pcshow" function (called in
 %"BezCP.DrawPointCloud" turns rotate3d on for axes instilled in guide GUI.
@@ -326,6 +328,10 @@ Ax=BezCP.CreateDrawingAxes(Ax);
 
 %Draw
 Stmp.StmpBezCP.DrawBezierPatches('Ax',Ax);
+if strcmp(handles.ControlPointsPlotPoPUp.String{handles.ControlPointsPlotPoPUp.Value},...
+        'With Control Points')
+    Stmp.StmpBezCP.DrawControlPoints('Ax',Ax);
+end
 function ScanPointCloudPush_Callback(hObject, eventdata, handles)
 DarkGreen=[0.31,0.49,0.37];
 if norm(hObject.BackgroundColor-DarkGreen)<0.01
@@ -490,6 +496,10 @@ if ~status || mod(Val,1)~=0 || ~(Val>0), errordlg('Input BezierOrder must be an 
 function HausedorffZThresholdEdit_Callback(hObject, eventdata, handles)
 [Val,status]=str2num(hObject.String);
 if ~status, errordlg('Input must be numeric'); end
+function HausdorffPatchPointsEdit_Callback(hObject, eventdata, handles)
+[Val,status]=str2num(hObject.String);
+if ~status, errordlg('Input must be numeric'); end
+if mod(Val,1)~=0, errordlg('Input must be an integer'); end
 %% GUI functions with no use
 function CapPopUp_Callback(hObject, eventdata, handles)
 function CapPopUp_CreateFcn(hObject, eventdata, handles)
@@ -545,13 +555,23 @@ function CurvaturePopUp_CreateFcn(hObject, eventdata, handles)
 if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
     set(hObject,'BackgroundColor','white');
 end
-function RadialOptimizePseudoInversePop_Callback(hObject, eventdata, handles)
-function RadialOptimizePseudoInversePop_CreateFcn(hObject, eventdata, handles)
-% hObject    handle to RadialOptimizePseudoInversePop (see GCBO)
+function ControlPointsPlotPoPUp_Callback(hObject, eventdata, handles)
+function ControlPointsPlotPoPUp_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to ControlPointsPlotPoPUp (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    empty - handles not created until after all CreateFcns called
 
 % Hint: popupmenu controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+function HausdorffPatchPointsEdit_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to HausdorffPatchPointsEdit (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: edit controls usually have a white background on Windows.
 %       See ISPC and COMPUTER.
 if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
     set(hObject,'BackgroundColor','white');
