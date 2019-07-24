@@ -562,7 +562,7 @@ classdef BezCP
             %}
             
             %default values
-            PauseTime=0; Msize=10; LineWidth=1;
+            PauseTime=0; Msize=2; LineWidth=1;
             %Obtain inputs
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
@@ -613,9 +613,11 @@ classdef BezCP
                 x=Pcp(:,:,1); y=Pcp(:,:,2); z=Pcp(:,:,3);
                 for j=1:BezO+1
                     Handles(1,j,k)=plot3(Ax,x(j,:),y(j,:),z(j,:),'Color',Color(k,:),...
-                        'MarkerSize',Msize,'linestyle','--','linewidth',LineWidth);
+                        'MarkerSize',Msize,'markerfacecolor',Color(k,:),...
+                        'Marker','o','linestyle','--','linewidth',LineWidth);
                     Handles(2,j,k)=plot3(Ax,x(:,j),y(:,j),z(:,j),'Color',Color(k,:),...
-                        'MarkerSize',Msize,'linestyle','--','linewidth',LineWidth);
+                        'Marker','o','MarkerSize',Msize,'markerfacecolor',Color(k,:),...
+                        'linestyle','--','linewidth',LineWidth);
                 end
                 pause(PauseTime);
             end
