@@ -63,4 +63,32 @@ lgnd=legend(Ax,'\color{white}Scan','\color{white}compact',...
 set(lgnd,'color',0.2*[1,1,1]);
 %% Hausdorff distance with plot
 Ax=BezCP.CreateDrawingAxes;
-Stmp.HausdorffAsses('Ax',Ax)
+N=30;
+Stmp.SymmetricalHausdorff('Ax',Ax,'N',N)
+
+%% Cylinder Curvature check
+Layers=1;
+Slices=4;
+BezO=8;
+
+r=1;
+h=5;
+m=(BezO+1)*Layers; %amount of points in parallel axis line
+
+z=linspace(0,h,m);
+R=r*ones(size(z));
+xz=[R',z'];
+
+n=BezO*Slices; %amount of points in circumference curve
+theta=linspace(0,2*pi,n+1);
+theta=theta(2:end); %first and last point were the same
+x=xz(:,1); z=xz(:,2);
+[X,Y,Z]=deal(zeros(m,n)); %initalize
+for i=1:n
+    X(:,i)=x*cos(theta(i));
+    Y(:,i)=x*sin(theta(i));
+    Z(:,i)=z;
+end
+CylMesh=cat(3,X,Y,Z);
+CylCP=BezCP(CylMesh,BezO,'method','circular');
+CylCP.DrawMeshCurvature('type','mean','Technique','parametric');

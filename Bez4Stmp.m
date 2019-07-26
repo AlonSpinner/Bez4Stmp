@@ -121,8 +121,6 @@ classdef Bez4Stmp
                         obj.BezierOrder=varargin{ind+1};
                     case 'xcentercalculationmethod'
                         obj.XcenterCalculationMethod=varargin{ind+1};
-                    case 'controlpointscalculationmethod'
-                        obj.ControlPointsCalculationMethod=varargin{ind+1};  
                     otherwise
                         error('no such name-value pair exists');
                 end
@@ -269,17 +267,10 @@ classdef Bez4Stmp
                 'target','pointcloud'); %expand CompactCP to PntCld
             close(h); %close helpdlg
             
+           
             %find control points describiing optimized CP.Vertices mesh surface
+            %save to obj.StmpBezCP
             obj.StmpBezCP=obj.RegisteredBezCP.PesudoInverseVertices;
-
-            if obj.RadialOptimizePseudoInverse
-                h=helpdlg(sprintf(['Optimization occuring.\n',...
-                    'May take a couple hours. Please wait. . .']));
-                obj.StmpBezCP=RadialOptimization4CP(obj.StmpBezCP,PntCld,[-minR,+10*maxR],Xcntr,...
-                    'Display',OptDisplay,'MaxIterations',MaxOptimizationIterions,...
-                    'target','SurfaceControlPoints','N',15); %expand CompactCP to PntCld
-                close(h); %close helpdlg
-            end
                     
             %if no cap, top edges whose location may vary across
             %top patches due to optimization to produce a peak point
@@ -289,7 +280,7 @@ classdef Bez4Stmp
             
             if Time, toc; end %display time it took for process
         end
-        function varargout=HausdorffAsses(obj,varargin)
+        function varargout=SymmetricalHausdorff(obj,varargin)
             %{
             Varagin inputs:
             Ax - handle of axes. if provided - drawns on them. if not -
@@ -318,7 +309,7 @@ classdef Bez4Stmp
             end
             
             %find hausdroff distance and the points who make it
-            P=obj.PointCloud.Location;
+            P=obj.T2ZScan.Location;
             P=P(P(:,3)>zThreshold,:); %filter out buttom noise
             Q=obj.StmpBezCP.Patches2PointCloud(N);
             szQ=size(Q);
@@ -355,6 +346,118 @@ classdef Bez4Stmp
             %Create output
             if nargout==0, varargout={};
             else, varargout={hd,rhd,Handles}; end
+        end
+        function varargout=DrawHausdorffMap(obj,varargin)
+            %{
+            %one sided hausdorff distance for each point on the
+            evaluated bezier surfaces.
+            %this means that for each evaluated point on a bezier surface
+            p, hausdorff(p)=min(p-Q) where Q is obj.T2ZScan point cloud.
+            
+            Varagin inputs:
+            Ax - handle of axes. if provided - drawns on them. if not -
+            doesnt draw.
+            N - number of points drawn in each evauluated patch are N^2. by default N=30
+            ZThreshold - filters out all points below ZThreshold
+            %Type - 'regular'/'radial'. radial hausdroff projects the
+            hausdorff distance on the radial line from Xcenter vertex/axis
+            (depending if on cylinderical or spherical part)
+            
+            Outputs by varargout:
+            varargout{1} = handle array of graphic objects
+            
+            note:
+            Importat note: is computed patch by patch to allow use of surf
+            for drawing
+            %}
+            %defaults
+            N=50; Bar='on'; PauseTime=0; FaceAlpha=1; EdgeColor='none';
+            Type='regular';
+            for ind=1:2:length(varargin)
+                comm=lower(varargin{ind});
+                switch comm
+                    case 'n'
+                        N=varargin{ind+1};
+                    case 'ax'
+                        Ax=varargin{ind+1};
+                    case 'bar'
+                        Bar=varargin{ind+1};
+                    case 'type'
+                        Type=varargin{ind+1};
+                    otherwise
+                        error('no such name-value pair exists');
+                end
+            end
+            
+            %create axes if not given
+            if ~exist('Ax','var') || isempty(Ax)
+                Fig=figure('color',[0,0,0]);
+                Ax=axes(Fig,'color',[0,0,0],'ZColor',[1,1,1],'XColor',[1,1,1],'YColor',[1,1,1]);
+                colormap(Ax,'jet');
+                xlabel(Ax,'x'); ylabel(Ax,'y'); zlabel(Ax,'z');
+                axis(Ax,'equal'); grid(Ax,'on'); hold(Ax,'on'); view(Ax,3);
+            end
+            
+            sz=size(obj.StmpBezCP.Patches);
+            PtchAmnt=sz(3);
+            Handles=gobjects(1,PtchAmnt);   
+            
+            switch Type
+                case 'regular'
+                    for k=1:PtchAmnt
+                        %pach properties
+                        Pcp=obj.StmpBezCP.Vertices(obj.StmpBezCP.Patches(:,:,k),:); %Obtain patch control points.
+                        Pcp=reshape(Pcp,[sz(1:2),3]); %format to match requirements of BezPtchCP2SrfP
+                        [Psrfp]=BezPtchCP2SrfP(Pcp,N);
+                        x=Psrfp(:,:,1); y=Psrfp(:,:,2); z=Psrfp(:,:,3);
+                        xyz=reshape(Psrfp,[],3);
+                        %build hd array
+                        hd=zeros(N^2,1); %N^2 - amount of points per patch
+                        for j=1:N^2
+                            hd(j)=BezCP.Hausdorff(xyz(j,:),obj.T2ZScan.Location,'OneSide');
+                        end
+                        %draw
+                        hd=reshape(hd,size(x));
+                        Handles(k)=surf(Ax,x,y,z,hd,'facealpha',FaceAlpha,'facecolor',...
+                            'interp','edgecolor',EdgeColor);
+                        drawnow;
+                        pause(PauseTime);
+                    end
+                case 'radial'
+                    Xcntr=obj.Xcenter;
+                    for k=1:PtchAmnt
+                        %patch properties
+                        Pcp=obj.StmpBezCP.Vertices(obj.StmpBezCP.Patches(:,:,k),:); %Obtain patch control points.
+                        Pcp=reshape(Pcp,[sz(1:2),3]); %format to match requirements of BezPtchCP2SrfP
+                        [Psrfp]=BezPtchCP2SrfP(Pcp,N);
+                        x=Psrfp(:,:,1); y=Psrfp(:,:,2); z=Psrfp(:,:,3);
+                        xyz=reshape(Psrfp,[],3);
+                        %build hd array
+                        hd=zeros(N^2,1); %N^2 - amount of points per patch
+                        for j=1:N^2
+                            P=xyz(j,:);
+                            [~,~,qind]=BezCP.Hausdorff(P,obj.T2ZScan.Location,'OneSide');
+                            %calculate radial distance (radial off mean point of Phd and Qhd)
+                            Qhd=obj.T2ZScan.Location(qind,:);
+                            m=mean([P;Qhd]);
+                            if m(3)>Xcntr(3), t=(m-Xcntr)/norm(m-Xcntr,2);
+                            else, t=[(m(1:2)-Xcntr(1:2)),0]/norm(m(1:2)-Xcntr(1:2),2); end
+                            hd(j,:)=abs(dot(P-Qhd,t)); %radial hausdorff distance
+                        end
+                        %draw
+                        hd=reshape(hd,size(x));
+                        Handles(k)=surf(Ax,x,y,z,hd,'facealpha',FaceAlpha,'facecolor',...
+                            'interp','edgecolor',EdgeColor);
+                        drawnow;
+                        pause(PauseTime);
+                    end
+            end
+            
+            if strcmpi(Bar,'on'), colorbar(Ax); end
+            
+            %Create output
+            if nargout==0, varargout={};
+            else, varargout={Handles}; end
         end
     end
 end
@@ -1138,6 +1241,82 @@ switch length(varargin)
 end % switch length(varargin)
 
 end %parseinputs %for fitcircle
+%Bezier evaluating functions
+function R=EvalBezCrv_DeCasteljau(Q,q)
+%{
+Evaluates Bezier Curve by given nodes and parameter
+value
+
+Q - nodes in format [x] or [x,y,z] dimension matrix. top row is q=0.
+q - running parameter of bezier curve. 0=<q<=1
+R - [x] or [x,y,z] format. point on bezier curve
+https://pages.mtu.edu/~shene/COURSES/cs3621/NOTES/spline/Bezier/de-casteljau.html
+%}
+
+n=size(Q,1)-1; %degree of bezier polynomial
+for k=1:(n+1)
+    for i=1:(n+1-k) %doesnt enter in first iteration
+        Q(i,:)=(1-q)*Q(i,:)+q*Q(i+1,:);
+    end
+end
+R=Q(1,:);
+end
+function R=EvalBezPtch_DeCasteljau(Pcp,u,v)
+%{
+Referance https://pages.mtu.edu/~shene/COURSES/cs3621/NOTES/surface/bezier-de-casteljau.html
+u,v - numeric running values of patch (running 0 to 1)
+
+Pcp - patch control points will be in the format of size(Pcp)=[Vorder+1,Uorder+1,3]
+for example: control point (1,1) value is placed as such: Pcp(1,1,:) = [X,Y,Z]
+EXAMPLE: Pcp(:,:)= P11,P12,P13 -----> u direction
+                  P21,P22,P23
+                  |
+                  |
+                  |
+    v direction   V
+
+runs algorithem on control points in the v direction, with parameter v to obtain a set of points.
+then run on those points with paramter u to obtain R(u,v)
+%}
+Xv=EvalBezCrv_DeCasteljau(Pcp(:,:,1),v);
+Yv=EvalBezCrv_DeCasteljau(Pcp(:,:,2),v);
+Zv=EvalBezCrv_DeCasteljau(Pcp(:,:,3),v);
+R(1)=EvalBezCrv_DeCasteljau(Xv',u);%x
+R(2)=EvalBezCrv_DeCasteljau(Yv',u);%y
+R(3)=EvalBezCrv_DeCasteljau(Zv',u);%z
+end
+function [SrfP,U,V]=BezPtchCP2SrfP(Pcp,N)
+%{
+retruns evaulted points on bezier patch surface from bezier patch conrol
+points. Amount of points if symmetric for both parametre direction (N)
+
+%Inputs:
+N - number of points for patching drawing is N^2
+Pcp- patch control points will be in the format of size(Pcp)=[Vorder+1,Uorder+1,3]
+for example: control point (1,1) value is placed as such: Pcp(1,1,:) = [X,Y,Z]
+EXAMPLE: Pcp(:,:)= P11,P12,P13 -----> u direction
+                  P21,P22,P23
+                  |
+                  |
+                  |
+    v direction   V
+
+%Output:
+Psrfp (Patch surf points) - numeric matrix NxNx3 containing (:,:[x,y,z]) of
+evaluated bezier patch points
+U,V - for meshing if anyone wants.
+%}
+
+[u,v]=deal(linspace(0,1,N));
+SrfP=zeros(N,N,3); %initalize
+[U,V]=meshgrid(u,v);
+for i=1:N
+    for j=1:N
+        R=EvalBezPtch_DeCasteljau(Pcp,U(i,j),V(i,j)); %Obtain Point
+        SrfP(i,j,1)=R(1); SrfP(i,j,2)=R(2); SrfP(i,j,3)=R(3); %Place in Matrix
+    end
+end
+end
 %% functions not in use - ideas not implemented
 function [P,Q]=BezBellCurve(R,d,L,Nq)
 %{

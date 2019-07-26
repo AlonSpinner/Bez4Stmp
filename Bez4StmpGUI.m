@@ -28,7 +28,7 @@ function varargout = Bez4StmpGUI(varargin)
 
 % Edit the above text to modify the response to help Bez4StmpGUI
 
-% Last Modified by GUIDE v2.5 24-Jul-2019 00:53:55
+% Last Modified by GUIDE v2.5 26-Jul-2019 11:18:15
 
 % Begin initialization code - DO NOT EDIT
 gui_Singleton = 1;
@@ -121,7 +121,7 @@ switch str
         [~,name,ext]=fileparts(file);
         FileFullName=[path,file];
         handles.NameTxt.String=sprintf('Name: %s',name);
-        switch ext
+        switch lower(ext)
             case '.stl'
                 [~,Scan]=stlread(FileFullName); %obtain vertices of STL
             case '.mat'
@@ -304,9 +304,10 @@ cla(Ax,'reset');
 Ax=BezCP.CreateDrawingAxes(Ax);
 
 %Draw
-Zfilter=str2num(handles.HausedorffZThresholdEdit.String);
+Type=handles.HausdorffTypePopUp.String{handles.HausdorffTypePopUp.Value};
 N=str2num(handles.HausdorffPatchPointsEdit.String);
-Stmp.HausdorffAsses('Ax',Ax,'zthreshold',Zfilter,'N',N);
+colormap(Ax,'jet');
+Stmp.DrawHausdorffMap('Ax',Ax,'N',N,'type',Type);
 
 %turn rotation off. For some reason "pcshow" function (called in
 %"BezCP.DrawPointCloud" turns rotate3d on for axes instilled in guide GUI.
@@ -368,13 +369,25 @@ Ax=handles.Ax;
 cla(Ax,'reset');
 Ax=BezCP.CreateDrawingAxes(Ax);
 colormap(Ax,'jet');
-colorbar(Ax);
 
 %Draw. Currently discrete gives better results for some reason
 Type=handles.CurvaturePopUp.String{handles.CurvaturePopUp.Value};
-Stmp.StmpBezCP.DrawMeshCurvature('Type',Type,'Ax',Ax,'Technique','Discrete');
+Stmp.StmpBezCP.DrawMeshCurvature('Type',Type,'Ax',Ax,'Technique','Discrete','bar','on');
 %info callbacks
 function DocumentationPush_Callback(hObject, eventdata, handles)
+%tool bar callbacks
+function Brush_ClickedCallback(hObject, eventdata, handles)
+b=brush(handles.Fig);
+switch b.Enable
+    case 'off'
+        b.Enable='on';
+        CData=hObject.CData/0.6;
+        CData(CData>1)=1;
+        hObject.CData=CData;
+    case 'on'
+        b.Enable='off';
+        hObject.CData=0.6*hObject.CData;
+end
 %% Functions
 %read stl
 function varargout=stlread(file)
@@ -493,9 +506,6 @@ if ~status || mod(Val,1)~=0 || ~(Val>0), errordlg('Input Slices must be an natru
 function BezierOrderEdit_Callback(hObject, eventdata, handles)
 [Val,status]=str2num(hObject.String);
 if ~status || mod(Val,1)~=0 || ~(Val>0), errordlg('Input BezierOrder must be an natrual number'); end
-function HausedorffZThresholdEdit_Callback(hObject, eventdata, handles)
-[Val,status]=str2num(hObject.String);
-if ~status, errordlg('Input must be numeric'); end
 function HausdorffPatchPointsEdit_Callback(hObject, eventdata, handles)
 [Val,status]=str2num(hObject.String);
 if ~status, errordlg('Input must be numeric'); end
@@ -534,16 +544,6 @@ function FileVarNamePopUp_CreateFcn(hObject, eventdata, handles)
 if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
     set(hObject,'BackgroundColor','white');
 end
-function HausedorffZThresholdEdit_CreateFcn(hObject, eventdata, handles)
-% hObject    handle to HausedorffZThresholdEdit (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    empty - handles not created until after all CreateFcns called
-
-% Hint: edit controls usually have a white background on Windows.
-%       See ISPC and COMPUTER.
-if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
-    set(hObject,'BackgroundColor','white');
-end
 function CurvaturePopUp_Callback(hObject, eventdata, handles)
 function CurvaturePopUp_CreateFcn(hObject, eventdata, handles)
 % hObject    handle to CurvaturePopUp (see GCBO)
@@ -572,6 +572,17 @@ function HausdorffPatchPointsEdit_CreateFcn(hObject, eventdata, handles)
 % handles    empty - handles not created until after all CreateFcns called
 
 % Hint: edit controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+function HausdorffTypePopUp_Callback(hObject, eventdata, handles)
+function HausdorffTypePopUp_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to HausdorffTypePopUp (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: popupmenu controls usually have a white background on Windows.
 %       See ISPC and COMPUTER.
 if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
     set(hObject,'BackgroundColor','white');

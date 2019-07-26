@@ -44,43 +44,38 @@ classdef BezCP
     N=Nhorz=Slices*BezierOrder+1
     
     %-----------------EXAMPLE: (script)--------------
-    PtchAmnt=16;
+    PtchAmnt=4;
     Layers=sqrt(PtchAmnt);
-    BezO=3;
+    BezO=4;
     N=Layers*BezO+1;
     [X,Y,Z]=peaks(N);
     MeshNodes=zeros(size(X));
     MeshNodes(:,:,1)=X; MeshNodes(:,:,2)=Y; MeshNodes(:,:,3)=Z;
-    PeaksCP=BezCP(MeshNodes,BezO,'Method','Block');
-    PseudoPeaksCP=PeaksCP.PesudoInverseVertices;
-    
-    %compare PeaksCP to original surface
-    %PeaksCP - mesh nodes of peaks surface are the control points for the bezier surface mesh
-    Ax11=PeaksCP.DrawBezierPatches('color',[1,0,0],'facealpha',1,'title','PeaksCP Bezier mesh vs Peaks Surface');
-    BezCP.DrawPointCloud(PeaksCP.Vertices,'color',[0,1,0],'msize',20,'Ax',Ax11); %draw control points
-    surf(Ax11,X,Y,Z,'EdgeColor','none','FaceAlpha',0.5)
-    
-    %compare PseudoPeaksCP to original peaks surface
-    %PseudoPeaksCP - bezier surface mesh attempts to equal peaks surface
-    Ax12=PseudoPeaksCP.DrawBezierPatches('color',[1,1,1],'title','PsuedoPeaksCP Bezier mesh vs Peaks Surface');
-    BezCP.DrawPointCloud(PseudoPeaksCP.Vertices,'color',[0,1,0],'msize',20,'Ax',Ax12); %draw control points
-    surf(Ax12,X,Y,Z,'EdgeColor','none','FaceAlpha',1)
-    
-    Ax13=PseudoPeaksCP.DrawBezierPatches('color',[1,1,1],'title','PsuedoPeaksCP Bezier mesh vs PeaksCP Bezier mesh');
-    PeaksCP.DrawBezierPatches('color',[1,0,0],'facealpha',1,'Ax',Ax13);
-    
-    %obtain figure handles of recently created axes
-    h11=Ax11.Parent; h12=Ax12.Parent; h13=Ax13.Parent;
-    
+    CP=BezCP(MeshNodes,BezO,'Method','Block');
+    PseudoInverseCP=CP.PesudoInverseVertices;
+
     %move axes into subplot array
     fig=figure('color',[0,0,0],'units','normalized','outerposition',[0 0 1 1]);
-    subplot(1,3,1,Ax11,'parent',fig);
-    subplot(1,3,2,Ax12,'parent',fig);
-    subplot(1,3,3,Ax13,'parent',fig);
-    
-    %delete old figures
-    close(h11,h12,h13);
-    clear('Ax11','Ax12','Ax13');
+    Ax11=subplot(1,2,1,BezCP.CreateDrawingAxes(fig),'parent',fig);
+    Ax12=subplot(1,2,2,BezCP.CreateDrawingAxes(fig),'parent',fig);
+
+    %compare PeaksCP to original surface
+    %PeaksCP - mesh nodes of peaks surface are the control points for the bezier surface mesh
+    srfH=CP.DrawBezierPatches('Ax',Ax11,'color',[0,0.7,0.7],'facealpha',1,...
+        'edgecolor',0.5*[1,1,1],'title','Control Points of CP are vertices in Peaks Surface');
+    pcH=BezCP.DrawPointCloud(MeshNodes,'Ax',Ax11,'color',[1,0,0],'msize',20);
+    subset=[srfH(1),pcH];
+    legend(subset,'\color{white}CP Bezier mesh','\color{white}Peaks surface vertices & CP control points')
+
+    %compare PseudoPeaksCP to original peaks surface
+    %PseudoPeaksCP - bezier surface mesh attempts to equal peaks surface
+    srfH=PseudoInverseCP.DrawBezierPatches('Ax',Ax12,'color',[1,1,1],'facealpha',1,...
+        'edgecolor',0.5*[1,1,1],'title','Control points of PsuedoInverseCP are outside Peaks Surface');
+    pcH1=BezCP.DrawPointCloud(PseudoInverseCP.Vertices,'Ax',Ax12,'color',[0,1,0],'msize',20); %draw control points
+    pcH2=BezCP.DrawPointCloud(MeshNodes,'Ax',Ax12,'color',[1,0,0],'msize',20);
+    subset=[srfH(1),pcH1,pcH2];
+    legend(subset,'\color{white}PseudoInverseCP Bezier mesh','\color{white}PsuedoInverseCP control points',...
+        '\color{white}Peaks surface vertices')
     %------------end of example-------------
     %}
     properties (SetAccess = private)
@@ -418,6 +413,7 @@ classdef BezCP
             FaceAlpha - facealpha of drawn surfaces ranges [0,1]
             EdgeColor - edgecolor of drawn faces or 'none'
             PauseTime - seconds to pause after each patch drawn
+            Bar - 'on'/'off' for colorbar showing
             
             IMPORTANT NOTE: %assumes block is made out of rectangular mesh of patches
             
@@ -428,7 +424,7 @@ classdef BezCP
             
             %default values
             N=30; Type='gaussian'; Technique='discrete'; FaceAlpha=1; EdgeColor='none';
-            PauseTime=0;
+            PauseTime=0; Bar='on';
             %Obtain inputs
             for ind=1:2:length(varargin)
                 comm=lower(varargin{ind});
@@ -449,6 +445,8 @@ classdef BezCP
                         Technique=varargin{ind+1};
                     case 'pausetime'
                         PauseTime=varargin{ind+1};
+                    case 'bar'
+                        Bar=varargin{ind+1};
                     otherwise
                         error('no such name-value pair exists');
                 end
@@ -537,7 +535,7 @@ classdef BezCP
                     end
             end
             
-            
+            if strcmpi(Bar,'on'), colorbar(Ax); end
             %Create output
             if nargout==0, varargout={};
             else, varargout={Handles,Ax}; end
@@ -1245,7 +1243,7 @@ L=Fnd2(1,1); M=Fnd2(1,2); N=Fnd2(2,2);
 switch Output
     case 'symbolic'
         K=(L*N-M^2)/(E*G-F^2); %gaussian curvature
-        H=(N*E-2*M*F+L*G)/(E*G-F^2); %mean curvature
+        H=0.5*(N*E-2*M*F+L*G)/(E*G-F^2); %mean curvature
     case 'function'
         K=matlabFunction((L*N-M^2)/(E*G-F^2)); %gaussian curvature
         H=matlabFunction((N*E-2*M*F+L*G)/(E*G-F^2)); %mean curvature
