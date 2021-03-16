@@ -115,15 +115,19 @@ and loads it.
 str=handles.FileVarNamePopUp.String{handles.FileVarNamePopUp.Value};
 switch str
     case 'File with extension'
-        filter={'*.stl;*.mat'};
+        filter={'*.ply;*.stl;*.mat'};
         [file,path,Ind]=uigetfile(filter);
         if Ind==0, return, end %user cancelled 
         [~,name,ext]=fileparts(file);
         FileFullName=[path,file];
         handles.NameTxt.String=sprintf('Name: %s',name);
         switch lower(ext)
+            case '.ply'
+                Scan=pcread(FileFullName);
+                Scan=Scan.Location;
             case '.stl'
-                [~,Scan]=stlread(FileFullName); %obtain vertices of STL
+                Scan=stlread(FileFullName); %obtain vertices of STL
+                Scan=Scan.Points;
             case '.mat'
                 S=load(FileFullName); %S is a struct with fieldnames being the names of the variables in mat
                 NameMatches=strcmp(fieldnames(S),name); %logical array
@@ -390,53 +394,53 @@ switch b.Enable
 end
 %% Functions
 %read stl
-function varargout=stlread(file)
-%{
-    Works only with binary STLS
-    imported from https://www.mathworks.com/matlabcentral/fileexchange/22409-stl-file-reader
-    slightly edited to remove ASCII parts which did not work
-    anyhow
-
-    STLREAD imports geometry from an STL file into MATLAB.
-       FV = STLREAD(FILENAME) imports triangular faces from the ASCII or binary
-       STL file idicated by FILENAME, and returns the patch struct FV, with fields
-       'faces' and 'vertices'.
-
-       [F,V] = STLREAD(FILENAME) returns the faces F and vertices V separately.
-
-       [F,V,N] = STLREAD(FILENAME) also returns the face normal vectors.
-
-       The faces and vertices are arranged in the format used by the PATCH plot
-       object.
-    Copyright 2011 The MathWorks, Inc.
-%}
-if ~exist(file,'file')
-    error(['File ''%s'' not found. If the file is not on MATLAB''s path' ...
-        ', be sure to specify the full path to the file.'], file);
-end
-
-fid = fopen(file,'r');
-if ~isempty(ferror(fid))
-    error(lasterror); %#ok
-end
-
-M = fread(fid,inf,'uint8=>uint8');
-fclose(fid);
-
-[f,v,n] = stlbinary(M);
-
-varargout = cell(1,nargout);
-switch nargout
-    case 2
-        varargout{1} = f;
-        varargout{2} = v;
-    case 3
-        varargout{1} = f;
-        varargout{2} = v;
-        varargout{3} = n;
-    otherwise
-        varargout{1} = struct('faces',f,'vertices',v);
-end
+% function varargout=stlread(file)
+% %{
+%     Works only with binary STLS
+%     imported from https://www.mathworks.com/matlabcentral/fileexchange/22409-stl-file-reader
+%     slightly edited to remove ASCII parts which did not work
+%     anyhow
+% 
+%     STLREAD imports geometry from an STL file into MATLAB.
+%        FV = STLREAD(FILENAME) imports triangular faces from the ASCII or binary
+%        STL file idicated by FILENAME, and returns the patch struct FV, with fields
+%        'faces' and 'vertices'.
+% 
+%        [F,V] = STLREAD(FILENAME) returns the faces F and vertices V separately.
+% 
+%        [F,V,N] = STLREAD(FILENAME) also returns the face normal vectors.
+% 
+%        The faces and vertices are arranged in the format used by the PATCH plot
+%        object.
+%     Copyright 2011 The MathWorks, Inc.
+% %}
+% if ~exist(file,'file')
+%     error(['File ''%s'' not found. If the file is not on MATLAB''s path' ...
+%         ', be sure to specify the full path to the file.'], file);
+% end
+% 
+% fid = fopen(file,'r');
+% if ~isempty(ferror(fid))
+%     error(lasterror); %#ok
+% end
+% 
+% M = fread(fid,inf,'uint8=>uint8');
+% fclose(fid);
+% 
+% [f,v,n] = stlbinary(M);
+% 
+% varargout = cell(1,nargout);
+% switch nargout
+%     case 2
+%         varargout{1} = f;
+%         varargout{2} = v;
+%     case 3
+%         varargout{1} = f;
+%         varargout{2} = v;
+%         varargout{3} = n;
+%     otherwise
+%         varargout{1} = struct('faces',f,'vertices',v);
+% end
 function [F,V,N]=stlbinary(M)
 F = [];
 V = [];

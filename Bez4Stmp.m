@@ -462,7 +462,7 @@ classdef Bez4Stmp
     end
 end
 %% algorithm pipeline functions
-function Newxyz=Transform2Z(xyz)
+function Newxyz=Transform2Z(xyz,flipX)
 %{
 Translate xyz points so that CGxy=[0,0], floor  is z=0, and primary
 axis of the convex shape will be the Z axis.
@@ -487,13 +487,16 @@ t=V(:,1); %col vec
 % We can make use of this by realizing that, to rotate a unit vector t into z, we simply need to rotate a by ? around (t+z)/2.
 % With this, one gets the beautiful
 z=[0;0;1]; %col vec
-Rtz=2*((t+z)*(t+z)')/((t+z)'*(t+z))-eye(3);
-R=zeros(4,4); R(1:3,1:3)=Rtz; R(4,4)=1;
+R=2*((t+z)*(t+z)')/((t+z)'*(t+z))-eye(3);
+
+if nargin>1
+    if flipX
+        R=rotx(180)*R;
+    end
+end
 
 %Rotate the data so the main axis is parallel to z
-OnesVec=ones(size(XYZ0,1),1);
-Rxyz=(R*[XYZ0,OnesVec]')';
-Rxyz=Rxyz(:,1:3);
+Rxyz=(R*XYZ0')';
 
 %translate the data so we start from [0,0,0]
 Txyz=Rxyz(:,1:3); %get rid of the ones vector
